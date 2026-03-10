@@ -57,8 +57,10 @@ Las aplicaciones de finanzas personales suelen ser complejas de usar en el momen
 3. **IMPORTANTE:** Actualizá estas líneas al principio del archivo:
 
 ```javascript
-const ADMIN_IDS = [533617529]; // Tu Telegram ID (el tuyo es 533617529)
+const ADMIN_IDS = [123456789]; // Tu Telegram ID (obtenelo con @userinfobot)
 ```
+
+> 💡 **Para obtener tu Telegram ID:** Buscá [@userinfobot](https://t.me/userinfobot) en Telegram y enviá cualquier mensaje. Te va a decir tu ID numérico.
 
 4. Reemplazá los valores en la función `setup()`:
 
