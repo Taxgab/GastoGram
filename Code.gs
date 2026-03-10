@@ -134,7 +134,11 @@ function procesarMensaje(message) {
   // COMANDO /historial [cantidad]
   if (text.startsWith('/historial')) {
     const partes = text.split(' ');
-    const cantidad = partes.length > 1 ? parseInt(partes[1]) : 10;
+    // ✅ AGREGAR: Límite máximo de 50
+    const cantidad = Math.min(
+      partes.length > 1 ? parseInt(partes[1]) : 10,
+      50
+    );
     mostrarHistorial(chatId, cantidad);
     return;
   }
@@ -173,12 +177,6 @@ function procesarMensaje(message) {
     return;
   }
   
-  // COMANDO /exportar
-  if (text === '/exportar') {
-    exportarCSV(chatId);
-    return;
-  }
-  
   // COMANDO /exportar [MM-YYYY]
   if (text.startsWith('/exportar')) {
     const partes = text.split(' ');
@@ -187,7 +185,8 @@ function procesarMensaje(message) {
       if (fechaPartes.length === 2) {
         const mes = parseInt(fechaPartes[0]) - 1;
         const anio = parseInt(fechaPartes[1]);
-        if (!isNaN(mes) && !isNaN(anio) && mes >= 0 && mes <= 11) {
+        // ✅ AGREGAR: Validación de año (igual que /mes)
+        if (!isNaN(mes) && !isNaN(anio) && mes >= 0 && mes <= 11 && anio >= 2020 && anio <= 2100) {
           exportarCSV(chatId, mes, anio);
           return;
         }
@@ -534,6 +533,9 @@ function exportarCSV(chatId, mes = null, anio = null) {
     payload: formData
   });
   
+  // ✅ AGREGAR: Eliminar archivo temporal
+  archivo.setTrashed(true);
+  
   sendMessage(chatId, `📥 Archivo exportado: ${nombreArchivo}\n\n📊 Total de gastos: ${gastosFiltrados.length - 1}`);
 }
 
@@ -626,17 +628,32 @@ function resetearPresupuesto(chatId) {
 function verificarPresupuesto(chatId) {
   const props = PropertiesService.getUserProperties();
   const presupuesto = parseFloat(props.getProperty('PRESUPUESTO') || '0');
-  
-  if (presupuesto <= 0) return; // Sin presupuesto configurado
+  if (presupuesto <= 0) return;
   
   const config = getConfig();
   const sheet = SpreadsheetApp.openById(config.sheetId).getActiveSheet();
   const data = sheet.getDataRange().getValues();
-  
-  const fechaActual = new Date();
-  const fechaAR = new Date(fechaActual.toLocaleString('en-US', {timeZone: TIMEZONE}));
+  const fechaAR = new Date(new Date().toLocaleString('en-US', {timeZone: TIMEZONE}));
   const mesActual = fechaAR.getMonth();
   const anioActual = fechaAR.getFullYear();
+  
+  // ✅ NUEVO: Resetear alertas si es otro mes
+  const alerta80Mes = props.getProperty('ALERTA_80_MONTH');
+  const alerta80Anio = props.getProperty('ALERTA_80_YEAR');
+  const alerta100Mes = props.getProperty('ALERTA_100_MONTH');
+  const alerta100Anio = props.getProperty('ALERTA_100_YEAR');
+  
+  if (alerta80Mes !== mesActual.toString() || alerta80Anio !== anioActual.toString()) {
+    props.setProperty('ALERTA_80_ENVIADA', 'false');
+    props.setProperty('ALERTA_80_MONTH', mesActual.toString());
+    props.setProperty('ALERTA_80_YEAR', anioActual.toString());
+  }
+  
+  if (alerta100Mes !== mesActual.toString() || alerta100Anio !== anioActual.toString()) {
+    props.setProperty('ALERTA_100_ENVIADA', 'false');
+    props.setProperty('ALERTA_100_MONTH', mesActual.toString());
+    props.setProperty('ALERTA_100_YEAR', anioActual.toString());
+  }
   
   let totalMes = 0;
   for (let i = 1; i < data.length; i++) {
@@ -865,19 +882,33 @@ function getCategorias() {
 
 // --- PROCESAR BOTÓN ---
 function procesarBoton(callbackQuery) {
-  const data = callbackQuery.data; 
-  const messageId = callbackQuery.message.message_id;
   const chatId = callbackQuery.message.chat.id;
+  
+  // ✅ AGREGAR: Validación de seguridad
+  if (!isAuthorized(chatId)) {
+    Logger.warning(`Intento no autorizado en botón: ${chatId}`);
+    return;
+  }
+  
+  const data = callbackQuery.data;
+  const messageId = callbackQuery.message.message_id;
 
   if (data.startsWith('cat_')) {
     const partesData = data.split('_');
     const categoria = partesData[1];
     const fila = parseInt(partesData[2]);
-
+    
+    // Validar rango de fila
     const config = getConfig();
     const sheet = SpreadsheetApp.openById(config.sheetId).getActiveSheet();
+    const maxFila = sheet.getLastRow();
+    if (fila < 2 || fila > maxFila) {
+      Logger.warning(`Intento de escribir fila inválida: ${fila}`);
+      return;
+    }
+    
     sheet.getRange(fila, 4).setValue(categoria);
-
+    
     const url = `https://api.telegram.org/bot${config.token}/editMessageText`;
     UrlFetchApp.fetch(url, {
       method: 'post',
