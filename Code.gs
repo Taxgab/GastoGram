@@ -8,9 +8,61 @@
  */
 
 // --- CONFIGURACIÓN ---
-const ADMIN_IDS = [123456789]; // IDs de Telegram autorizados (REEMPLAZAR con tu ID real)
-// Para obtener tu Telegram ID: buscá @userinfobot en Telegram y enviá cualquier mensaje
 const TIMEZONE = 'America/Argentina/Buenos_Aires';
+
+// --- CATEGORÍAS DEFAULT (Fix 13) ---
+const CATEGORIAS_DEFAULT = [
+  { nombre: 'Comida', emoji: '🍎' },
+  { nombre: 'Transporte', emoji: '🚌' },
+  { nombre: 'Hormiga', emoji: '☕' },
+  { nombre: 'Súper', emoji: '🛒' },
+  { nombre: 'Salud', emoji: '💊' },
+  { nombre: 'Ocio', emoji: '🎬' },
+  { nombre: 'Servicios', emoji: '💡' },
+  { nombre: 'Otros', emoji: '📦' }
+];
+
+// --- SANITIZACIÓN PARA GRÁFICO HTML (Fix 2) ---
+function sanitizeForJS(str) {
+  return String(str)
+    .replace(/\\/g, '\\\\')
+    .replace(/'/g, "\\'")
+    .replace(/"/g, '\\"')
+    .replace(/\n/g, '\\n');
+}
+
+// --- OBTENER ADMIN IDS DESDE PROPERTIES (Fix 1) ---
+function getAdminIds() {
+  const props = PropertiesService.getUserProperties();
+  const ids = props.getProperty('ADMIN_IDS');
+  return ids ? JSON.parse(ids) : [];
+}
+
+// --- FUNCIÓN UTILITARIA PARA FILTRADO (Fix 12) ---
+function filtrarGastosPorMes(data, mes, anio) {
+  return data.filter(fila => {
+    const fechaCelda = fila[0];
+    let fechaGasto = fechaCelda instanceof Date ? fechaCelda : new Date(fechaCelda);
+    
+    if (isNaN(fechaGasto.getTime())) return false;
+    
+    return fechaGasto.getMonth() === mes && fechaGasto.getFullYear() === anio;
+  });
+}
+
+// --- TIMEZONE EN PARSEO DE FECHAS (Fix 9) ---
+function obtenerMesAnioEnTimezone(fechaCelda, timezone) {
+  let fecha;
+  if (fechaCelda instanceof Date) {
+    fecha = fechaCelda;
+  } else {
+    fecha = new Date(fechaCelda);
+  }
+  
+  const fechaStr = Utilities.formatDate(fecha, timezone, 'yyyy-MM');
+  const [anio, mes] = fechaStr.split('-').map(Number);
+  return { mes: mes - 1, anio };
+}
 
 // --- SETUP INICIAL (ejecutar una vez desde Apps Script) ---
 function setup() {
@@ -21,18 +73,11 @@ function setup() {
   props.setProperty('SHEET_ID', 'TU_ID_DE_HOJA_DE_CALCULO_AQUI');
   props.setProperty('WEBHOOK_URL', 'URL_DE_TU_WEB_APP_AQUI');
   
-  // Inicializar categorías por defecto
-  const categoriasDefault = [
-    { nombre: 'Comida', emoji: '🍎' },
-    { nombre: 'Transporte', emoji: '🚌' },
-    { nombre: 'Hormiga', emoji: '☕' },
-    { nombre: 'Súper', emoji: '🛒' },
-    { nombre: 'Salud', emoji: '💊' },
-    { nombre: 'Ocio', emoji: '🎬' },
-    { nombre: 'Servicios', emoji: '💡' },
-    { nombre: 'Otros', emoji: '📦' }
-  ];
-  props.setProperty('CATEGORIAS', JSON.stringify(categoriasDefault));
+  // Fix 1: Guardar ADMIN_IDS en PropertiesService
+  props.setProperty('ADMIN_IDS', JSON.stringify([533617529])); // ID real del usuario
+  
+  // Inicializar categorías por defecto (Fix 13)
+  props.setProperty('CATEGORIAS', JSON.stringify(CATEGORIAS_DEFAULT));
   
   // Inicializar presupuesto default (0 = sin presupuesto)
   if (!props.getProperty('PRESUPUESTO')) {
@@ -47,19 +92,22 @@ function setup() {
   Logger.log('✅ Configuración completada');
 }
 
-// --- OBTENER CREDENTIALS ---
+// --- OBTENER CREDENTIALS (Fix 4: Validación de configuración) ---
 function getConfig() {
   const props = PropertiesService.getUserProperties();
-  return {
-    token: props.getProperty('TELEGRAM_TOKEN'),
-    sheetId: props.getProperty('SHEET_ID'),
-    webhookUrl: props.getProperty('WEBHOOK_URL')
-  };
+  const token = props.getProperty('TELEGRAM_TOKEN');
+  const sheetId = props.getProperty('SHEET_ID');
+  
+  if (!token || !sheetId) {
+    throw new Error('Configuración incompleta. Ejecutá setup() primero.');
+  }
+  
+  return { token, sheetId, webhookUrl: props.getProperty('WEBHOOK_URL') };
 }
 
-// --- VALIDAR USUARIO AUTORIZADO ---
+// --- VALIDAR USUARIO AUTORIZADO (Fix 1) ---
 function isAuthorized(chatId) {
-  return ADMIN_IDS.includes(chatId);
+  return getAdminIds().includes(chatId);
 }
 
 // --- SET WEBHOOK ---
@@ -70,7 +118,7 @@ function setWebhook() {
   Logger.log('Webhook response: ' + response.getContentText());
 }
 
-// --- MANEJO DE COMANDOS ---
+// --- MANEJO DE COMANDOS (Fix 15: Mensajes de error claros) ---
 function doPost(e) {
   try {
     const contents = JSON.parse(e.postData.contents);
@@ -82,6 +130,7 @@ function doPost(e) {
     }
   } catch (error) {
     Logger.error('Error en doPost: ' + error.toString());
+    // Fix 15: No podemos enviar mensaje aquí porque no tenemos chatId
   }
   return HtmlService.createHtmlOutput('OK');
 }
@@ -89,7 +138,10 @@ function doPost(e) {
 // --- PROCESAR MENSAJES ---
 function procesarMensaje(message) {
   const chatId = message.chat.id;
-  const username = message.from.username || message.from.first_name;
+  // Fix 7: Null reference fix
+  const username = (message.from && message.from.username) || 
+                   (message.from && message.from.first_name) || 
+                   'Usuario';
   const text = message.text.trim();
   
   // VALIDACIÓN DE SEGURIDAD: Solo usuarios autorizados
@@ -111,132 +163,39 @@ function procesarMensaje(message) {
     return;
   }
   
-  // COMANDO /mes [MM-YYYY]
+  // COMANDO /mes [MM-YYYY] (Fix 11: Handler extraído)
   if (text.toLowerCase().startsWith('/mes')) {
-    const partes = text.split(' ');
-    if (partes.length > 1) {
-      const fechaPartes = partes[1].split('-');
-      if (fechaPartes.length === 2) {
-        const mes = parseInt(fechaPartes[0]) - 1;
-        const anio = parseInt(fechaPartes[1]);
-        if (!isNaN(mes) && !isNaN(anio) && mes >= 0 && mes <= 11 && anio >= 2020 && anio <= 2100) {
-          generarReporteMensual(chatId, mes, anio);
-          return;
-        }
-      }
-      sendMessage(chatId, '⚠️ Formato inválido. Usá: /mes MM-YYYY\nEjemplo: /mes 03-2026');
-      return;
-    }
-    generarReporteMensual(chatId);
+    handleComandoMes(chatId, text);
     return;
   }
   
-  // COMANDO /historial [cantidad]
+  // COMANDO /historial [cantidad] (Fix 11: Handler extraído)
   if (text.startsWith('/historial')) {
-    const partes = text.split(' ');
-    // ✅ AGREGAR: Límite máximo de 50
-    const cantidad = Math.min(
-      partes.length > 1 ? parseInt(partes[1]) : 10,
-      50
-    );
-    mostrarHistorial(chatId, cantidad);
+    handleComandoHistorial(chatId, text);
     return;
   }
   
-  // COMANDO /categorias
-  if (text === '/categorias') {
-    mostrarCategorias(chatId);
+  // COMANDO /categorias (Fix 11: Handler extraído)
+  if (text === '/categorias' || text.startsWith('/categorias ')) {
+    handleComandoCategorias(chatId, text);
     return;
   }
   
-  // COMANDO /categorias agregar [emoji] [nombre]
-  if (text.startsWith('/categorias agregar')) {
-    const match = text.match(/\/categorias agregar\s+(\S+)\s+(.+)/);
-    if (match && match.length === 3) {
-      agregarCategoria(chatId, match[1], match[2].trim());
-      return;
-    }
-    sendMessage(chatId, '⚠️ Formato: /categorias agregar 🍕 Comida Rápida');
-    return;
-  }
-  
-  // COMANDO /categorias eliminar [nombre]
-  if (text.startsWith('/categorias eliminar')) {
-    const nombre = text.replace('/categorias eliminar', '').trim();
-    if (nombre) {
-      eliminarCategoria(chatId, nombre);
-      return;
-    }
-    sendMessage(chatId, '⚠️ Formato: /categorias eliminar Comida Rápida');
-    return;
-  }
-  
-  // COMANDO /categorias reset
-  if (text === '/categorias reset') {
-    resetearCategorias(chatId);
-    return;
-  }
-  
-  // COMANDO /exportar [MM-YYYY]
+  // COMANDO /exportar [MM-YYYY] (Fix 11: Handler extraído)
   if (text.startsWith('/exportar')) {
-    const partes = text.split(' ');
-    if (partes.length > 1) {
-      const fechaPartes = partes[1].split('-');
-      if (fechaPartes.length === 2) {
-        const mes = parseInt(fechaPartes[0]) - 1;
-        const anio = parseInt(fechaPartes[1]);
-        // ✅ AGREGAR: Validación de año (igual que /mes)
-        if (!isNaN(mes) && !isNaN(anio) && mes >= 0 && mes <= 11 && anio >= 2020 && anio <= 2100) {
-          exportarCSV(chatId, mes, anio);
-          return;
-        }
-      }
-      sendMessage(chatId, '⚠️ Formato: /exportar MM-YYYY\nEjemplo: /exportar 03-2026');
-      return;
-    }
-    exportarCSV(chatId);
+    handleComandoExportar(chatId, text);
     return;
   }
   
-  // COMANDO /presupuesto [monto]
+  // COMANDO /presupuesto [monto] (Fix 11: Handler extraído)
   if (text.startsWith('/presupuesto')) {
-    const partes = text.split(' ');
-    if (partes.length > 1) {
-      const monto = parseFloat(partes[1].replace(',', '.'));
-      if (!isNaN(monto) && monto > 0) {
-        establecerPresupuesto(chatId, monto);
-        return;
-      }
-      sendMessage(chatId, '⚠️ Monto inválido. Ejemplo: /presupuesto 50000');
-      return;
-    }
-    verPresupuesto(chatId);
+    handleComandoPresupuesto(chatId, text);
     return;
   }
   
-  // COMANDO /presupuesto reset
-  if (text === '/presupuesto reset') {
-    resetearPresupuesto(chatId);
-    return;
-  }
-  
-  // COMANDO /grafico [MM-YYYY]
+  // COMANDO /grafico [MM-YYYY] (Fix 11: Handler extraído)
   if (text === '/grafico' || text.startsWith('/grafico ')) {
-    const partes = text.split(' ');
-    if (partes.length > 1) {
-      const fechaPartes = partes[1].split('-');
-      if (fechaPartes.length === 2) {
-        const mes = parseInt(fechaPartes[0]) - 1;
-        const anio = parseInt(fechaPartes[1]);
-        if (!isNaN(mes) && !isNaN(anio) && mes >= 0 && mes <= 11) {
-          enviarGrafico(chatId, mes, anio);
-          return;
-        }
-      }
-      sendMessage(chatId, '⚠️ Formato: /grafico MM-YYYY\nEjemplo: /grafico 03-2026');
-      return;
-    }
-    enviarGrafico(chatId);
+    handleComandoGrafico(chatId, text);
     return;
   }
   
@@ -246,29 +205,34 @@ function procesarMensaje(message) {
     return;
   }
   
-  // PROCESAR GASTO
-  const date = new Date(message.date * 1000);
-  const partes = text.split(' ');
-  const monto = parseFloat(partes[0].replace(',', '.'));
-  const config = getConfig();
-  const sheet = SpreadsheetApp.openById(config.sheetId).getActiveSheet();
+  // PROCESAR GASTO (Fix 15: Manejo de errores claros)
+  try {
+    const date = new Date(message.date * 1000);
+    const partes = text.split(' ');
+    const monto = parseFloat(partes[0].replace(',', '.'));
+    const config = getConfig();
+    const sheet = SpreadsheetApp.openById(config.sheetId).getActiveSheet();
 
-  if (!isNaN(monto) && partes.length > 1) {
-    const descripcion = partes.slice(1).join(' ');
-    
-    // Usar timezone de Argentina
-    const fechaAR = Utilities.formatDate(date, TIMEZONE, 'yyyy-MM-dd HH:mm:ss');
-    
-    sheet.appendRow([fechaAR, monto, descripcion, '⏳ Pendiente', chatId]);
-    const fila = sheet.getLastRow();
-    
-    // Verificar presupuesto después de registrar
-    const mensajeGasto = enviarTecladoCategorias(chatId, monto, descripcion, fila);
-    
-    // Verificar si supera presupuesto
-    verificarPresupuesto(chatId);
-  } else {
-    sendMessage(chatId, `⚠️ Formato incorrecto.\n\n👉 Ejemplo: 1500 cafe\n👉 Ejemplo: 2500.50 taxi al centro\n\n📊 Para ver tus gastos envía /mes\n📜 Para historial envía /historial\n🏷️ Para categorías envía /categorias\n📥 Para exportar envía /exportar\n💰 Para presupuesto envía /presupuesto\n📊 Para gráfico envía /grafico\n❓ Para ayuda envía /ayuda`);
+    if (!isNaN(monto) && partes.length > 1) {
+      const descripcion = partes.slice(1).join(' ');
+      
+      // Usar timezone de Argentina
+      const fechaAR = Utilities.formatDate(date, TIMEZONE, 'yyyy-MM-dd HH:mm:ss');
+      
+      sheet.appendRow([fechaAR, monto, descripcion, '⏳ Pendiente', chatId]);
+      const fila = sheet.getLastRow();
+      
+      // Verificar presupuesto después de registrar
+      const mensajeGasto = enviarTecladoCategorias(chatId, monto, descripcion, fila);
+      
+      // Verificar si supera presupuesto
+      verificarPresupuesto(chatId);
+    } else {
+      sendMessage(chatId, `⚠️ Formato incorrecto.\n\n👉 Ejemplo: 1500 cafe\n👉 Ejemplo: 2500.50 taxi al centro\n\n📊 Para ver tus gastos envía /mes\n📜 Para historial envía /historial\n🏷️ Para categorías envía /categorias\n📥 Para exportar envía /exportar\n💰 Para presupuesto envía /presupuesto\n📊 Para gráfico envía /grafico\n❓ Para ayuda envía /ayuda`);
+    }
+  } catch (error) {
+    Logger.error('Error en procesarMensaje (procesar gasto): ' + error.toString());
+    sendMessage(chatId, '⚠️ Ocurrió un error. Por favor intentá de nuevo en unos minutos.');
   }
 }
 
@@ -341,12 +305,34 @@ function mostrarHistorial(chatId, cantidad) {
   sendMessageMarkdown(chatId, mensaje);
 }
 
-// --- GENERAR REPORTE MENSUAL ---
-function generarReporteMensual(chatId, mes = null, anio = null) {
+// --- LECTURA POR BLOQUES PARA SHEETS GRANDES (Fix 5) ---
+function getGastosDelMes(mes, anio) {
   const config = getConfig();
   const sheet = SpreadsheetApp.openById(config.sheetId).getActiveSheet();
-  const data = sheet.getDataRange().getValues();
+  const lastRow = sheet.getLastRow();
   
+  if (lastRow <= 1) return [];
+  
+  const datos = [];
+  const batchSize = 1000;
+  
+  for (let start = 2; start <= lastRow; start += batchSize) {
+    const end = Math.min(start + batchSize - 1, lastRow);
+    const batch = sheet.getRange(start, 1, end - start + 1, 5).getValues();
+    
+    batch.forEach(fila => {
+      const fecha = new Date(fila[0]);
+      if (fecha.getMonth() === mes && fecha.getFullYear() === anio) {
+        datos.push(fila);
+      }
+    });
+  }
+  
+  return datos;
+}
+
+// --- GENERAR REPORTE MENSUAL (Fix 5: Usa getGastosDelMes) ---
+function generarReporteMensual(chatId, mes = null, anio = null) {
   if (mes === null || anio === null) {
     const fechaActual = new Date();
     const fechaAR = new Date(fechaActual.toLocaleString('en-US', {timeZone: TIMEZONE}));
@@ -354,43 +340,29 @@ function generarReporteMensual(chatId, mes = null, anio = null) {
     anio = fechaAR.getFullYear();
   }
   
-  let totalMes = 0;
-  let categorias = {};
-  let gastosContabilizados = 0;
-
-  for (let i = 1; i < data.length; i++) {
-    const fila = data[i];
-    const fechaCelda = fila[0];
-    
-    let fechaGasto;
-    if (fechaCelda instanceof Date) {
-      fechaGasto = fechaCelda;
-    } else {
-      fechaGasto = new Date(fechaCelda);
-    }
-    
-    if (!isNaN(fechaGasto.getTime())) {
-      if (fechaGasto.getMonth() === mes && fechaGasto.getFullYear() === anio) {
-        const monto = parseFloat(fila[1]);
-        const categoria = fila[3] || 'Sin categoría';
-        
-        if (!isNaN(monto)) {
-          totalMes += monto;
-          categorias[categoria] = (categorias[categoria] || 0) + monto;
-          gastosContabilizados++;
-        }
-      }
-    }
-  }
-
-  if (totalMes === 0) {
+  const gastosDelMes = getGastosDelMes(mes, anio);
+  
+  if (gastosDelMes.length === 0) {
     sendMessage(chatId, `📊 No hay gastos registrados en ${obtenerNombreMes(mes)} ${anio}.`);
     return;
   }
+  
+  let totalMes = 0;
+  let categorias = {};
+
+  gastosDelMes.forEach(fila => {
+    const monto = parseFloat(fila[1]);
+    const categoria = fila[3] || 'Sin categoría';
+    
+    if (!isNaN(monto)) {
+      totalMes += monto;
+      categorias[categoria] = (categorias[categoria] || 0) + monto;
+    }
+  });
 
   let mensaje = `📊 *Resumen de ${obtenerNombreMes(mes)} ${anio}*\n\n`;
   mensaje += `💰 *Total Gastado: $${totalMes.toFixed(2)}*\n`;
-  mensaje += `📦 Gastos: ${gastosContabilizados}\n\n`;
+  mensaje += `📦 Gastos: ${gastosDelMes.length}\n\n`;
   mensaje += `📈 *Por Categoría:*\n`;
   
   const categoriasOrdenadas = Object.entries(categorias).sort((a, b) => b[1] - a[1]);
@@ -452,30 +424,18 @@ function eliminarCategoria(chatId, nombre) {
   sendMessage(chatId, `🗑️ Categoría eliminada: ${nombre}\n\nAhora tenés ${nuevasCategorias.length} categorías.`);
 }
 
-// --- RESETEAR CATEGORÍAS ---
+// --- RESETEAR CATEGORÍAS (Fix 13: Usa CATEGORIAS_DEFAULT) ---
 function resetearCategorias(chatId) {
   const props = PropertiesService.getUserProperties();
-  const categoriasDefault = [
-    { nombre: 'Comida', emoji: '🍎' },
-    { nombre: 'Transporte', emoji: '🚌' },
-    { nombre: 'Hormiga', emoji: '☕' },
-    { nombre: 'Súper', emoji: '🛒' },
-    { nombre: 'Salud', emoji: '💊' },
-    { nombre: 'Ocio', emoji: '🎬' },
-    { nombre: 'Servicios', emoji: '💡' },
-    { nombre: 'Otros', emoji: '📦' }
-  ];
   
-  props.setProperty('CATEGORIAS', JSON.stringify(categoriasDefault));
+  props.setProperty('CATEGORIAS', JSON.stringify(CATEGORIAS_DEFAULT));
   
-  sendMessage(chatId, `🔄 Categorías reseteadas a las originales (${categoriasDefault.length} categorías).`);
+  sendMessage(chatId, `🔄 Categorías reseteadas a las originales (${CATEGORIAS_DEFAULT.length} categorías).`);
 }
 
-// --- EXPORTAR CSV ---
+// --- EXPORTAR CSV (Fix 5: Usa getGastosDelMes) ---
 function exportarCSV(chatId, mes = null, anio = null) {
   const config = getConfig();
-  const sheet = SpreadsheetApp.openById(config.sheetId).getActiveSheet();
-  const data = sheet.getDataRange().getValues();
   
   if (mes === null || anio === null) {
     const fechaActual = new Date();
@@ -484,30 +444,14 @@ function exportarCSV(chatId, mes = null, anio = null) {
     anio = fechaAR.getFullYear();
   }
   
-  const gastosFiltrados = [['Fecha', 'Monto', 'Descripción', 'Categoría']];
+  const gastosDelMes = getGastosDelMes(mes, anio);
   
-  for (let i = 1; i < data.length; i++) {
-    const fila = data[i];
-    const fechaCelda = fila[0];
-    
-    let fechaGasto;
-    if (fechaCelda instanceof Date) {
-      fechaGasto = fechaCelda;
-    } else {
-      fechaGasto = new Date(fechaCelda);
-    }
-    
-    if (!isNaN(fechaGasto.getTime())) {
-      if (fechaGasto.getMonth() === mes && fechaGasto.getFullYear() === anio) {
-        gastosFiltrados.push([fila[0], fila[1], fila[2], fila[3]]);
-      }
-    }
-  }
-  
-  if (gastosFiltrados.length <= 1) {
+  if (gastosDelMes.length === 0) {
     sendMessage(chatId, `📊 No hay gastos para exportar en ${obtenerNombreMes(mes)} ${anio}.`);
     return;
   }
+  
+  const gastosFiltrados = [['Fecha', 'Monto', 'Descripción', 'Categoría'], ...gastosDelMes];
   
   let csv = '';
   gastosFiltrados.forEach(fila => {
@@ -533,10 +477,9 @@ function exportarCSV(chatId, mes = null, anio = null) {
     payload: formData
   });
   
-  // ✅ AGREGAR: Eliminar archivo temporal
   archivo.setTrashed(true);
   
-  sendMessage(chatId, `📥 Archivo exportado: ${nombreArchivo}\n\n📊 Total de gastos: ${gastosFiltrados.length - 1}`);
+  sendMessage(chatId, `📥 Archivo exportado: ${nombreArchivo}\n\n📊 Total de gastos: ${gastosDelMes.length}`);
 }
 
 // --- ESTABLECER PRESUPUESTO ---
@@ -557,36 +500,20 @@ function verPresupuesto(chatId) {
     return;
   }
   
-  const config = getConfig();
-  const sheet = SpreadsheetApp.openById(config.sheetId).getActiveSheet();
-  const data = sheet.getDataRange().getValues();
-  
   const fechaActual = new Date();
   const fechaAR = new Date(fechaActual.toLocaleString('en-US', {timeZone: TIMEZONE}));
   const mesActual = fechaAR.getMonth();
   const anioActual = fechaAR.getFullYear();
   
+  const gastosDelMes = getGastosDelMes(mesActual, anioActual);
+  
   let totalMes = 0;
-  for (let i = 1; i < data.length; i++) {
-    const fila = data[i];
-    const fechaCelda = fila[0];
-    
-    let fechaGasto;
-    if (fechaCelda instanceof Date) {
-      fechaGasto = fechaCelda;
-    } else {
-      fechaGasto = new Date(fechaCelda);
+  gastosDelMes.forEach(fila => {
+    const monto = parseFloat(fila[1]);
+    if (!isNaN(monto)) {
+      totalMes += monto;
     }
-    
-    if (!isNaN(fechaGasto.getTime())) {
-      if (fechaGasto.getMonth() === mesActual && fechaGasto.getFullYear() === anioActual) {
-        const monto = parseFloat(fila[1]);
-        if (!isNaN(monto)) {
-          totalMes += monto;
-        }
-      }
-    }
-  }
+  });
   
   const porcentaje = ((totalMes / presupuesto) * 100).toFixed(1);
   const restante = presupuesto - totalMes;
@@ -624,20 +551,17 @@ function resetearPresupuesto(chatId) {
   sendMessage(chatId, '🔄 Presupuesto eliminado.\n\nYa no recibirás alertas de presupuesto.');
 }
 
-// --- VERIFICAR PRESUPUESTO (después de cada gasto) ---
+// --- VERIFICAR PRESUPUESTO (después de cada gasto) (Fix 5: Usa getGastosDelMes) ---
 function verificarPresupuesto(chatId) {
   const props = PropertiesService.getUserProperties();
   const presupuesto = parseFloat(props.getProperty('PRESUPUESTO') || '0');
   if (presupuesto <= 0) return;
   
-  const config = getConfig();
-  const sheet = SpreadsheetApp.openById(config.sheetId).getActiveSheet();
-  const data = sheet.getDataRange().getValues();
   const fechaAR = new Date(new Date().toLocaleString('en-US', {timeZone: TIMEZONE}));
   const mesActual = fechaAR.getMonth();
   const anioActual = fechaAR.getFullYear();
   
-  // ✅ NUEVO: Resetear alertas si es otro mes
+  // Resetear alertas si es otro mes
   const alerta80Mes = props.getProperty('ALERTA_80_MONTH');
   const alerta80Anio = props.getProperty('ALERTA_80_YEAR');
   const alerta100Mes = props.getProperty('ALERTA_100_MONTH');
@@ -655,32 +579,18 @@ function verificarPresupuesto(chatId) {
     props.setProperty('ALERTA_100_YEAR', anioActual.toString());
   }
   
+  const gastosDelMes = getGastosDelMes(mesActual, anioActual);
+  
   let totalMes = 0;
-  for (let i = 1; i < data.length; i++) {
-    const fila = data[i];
-    const fechaCelda = fila[0];
-    
-    let fechaGasto;
-    if (fechaCelda instanceof Date) {
-      fechaGasto = fechaCelda;
-    } else {
-      fechaGasto = new Date(fechaCelda);
+  gastosDelMes.forEach(fila => {
+    const monto = parseFloat(fila[1]);
+    if (!isNaN(monto)) {
+      totalMes += monto;
     }
-    
-    if (!isNaN(fechaGasto.getTime())) {
-      if (fechaGasto.getMonth() === mesActual && fechaGasto.getFullYear() === anioActual) {
-        const monto = parseFloat(fila[1]);
-        if (!isNaN(monto)) {
-          totalMes += monto;
-        }
-      }
-    }
-  }
+  });
   
   const porcentaje = (totalMes / presupuesto) * 100;
   
-  // Enviar alerta solo en hitos específicos (80%, 100%)
-  // Usamos una propiedad para trackear si ya enviamos la alerta
   const alerta80Enviada = props.getProperty('ALERTA_80_ENVIADA') === 'true';
   const alerta100Enviada = props.getProperty('ALERTA_100_ENVIADA') === 'true';
   
@@ -715,11 +625,9 @@ function verEstadoAlertas(chatId) {
   sendMessageMarkdown(chatId, mensaje);
 }
 
-// --- ENVIAR GRÁFICO ---
+// --- ENVIAR GRÁFICO (Fix 2: Sanitización + Fix 5: getGastosDelMes) ---
 function enviarGrafico(chatId, mes = null, anio = null) {
   const config = getConfig();
-  const sheet = SpreadsheetApp.openById(config.sheetId).getActiveSheet();
-  const data = sheet.getDataRange().getValues();
   
   if (mes === null || anio === null) {
     const fechaActual = new Date();
@@ -728,32 +636,25 @@ function enviarGrafico(chatId, mes = null, anio = null) {
     anio = fechaAR.getFullYear();
   }
   
+  const gastosDelMes = getGastosDelMes(mes, anio);
+  
+  if (gastosDelMes.length === 0) {
+    sendMessage(chatId, `📊 No hay gastos para graficar en ${obtenerNombreMes(mes)} ${anio}.`);
+    return;
+  }
+  
   let categorias = {};
   let totalMes = 0;
 
-  for (let i = 1; i < data.length; i++) {
-    const fila = data[i];
-    const fechaCelda = fila[0];
+  gastosDelMes.forEach(fila => {
+    const monto = parseFloat(fila[1]);
+    const categoria = fila[3] || 'Sin categoría';
     
-    let fechaGasto;
-    if (fechaCelda instanceof Date) {
-      fechaGasto = fechaCelda;
-    } else {
-      fechaGasto = new Date(fechaCelda);
+    if (!isNaN(monto)) {
+      totalMes += monto;
+      categorias[categoria] = (categorias[categoria] || 0) + monto;
     }
-    
-    if (!isNaN(fechaGasto.getTime())) {
-      if (fechaGasto.getMonth() === mes && fechaGasto.getFullYear() === anio) {
-        const monto = parseFloat(fila[1]);
-        const categoria = fila[3] || 'Sin categoría';
-        
-        if (!isNaN(monto)) {
-          totalMes += monto;
-          categorias[categoria] = (categorias[categoria] || 0) + monto;
-        }
-      }
-    }
-  }
+  });
 
   if (totalMes === 0) {
     sendMessage(chatId, `📊 No hay gastos para graficar en ${obtenerNombreMes(mes)} ${anio}.`);
@@ -767,7 +668,7 @@ function enviarGrafico(chatId, mes = null, anio = null) {
   const categoriasNombres = categoriasOrdenadas.map(c => c[0]);
   const categoriasMontos = categoriasOrdenadas.map(c => c[1]);
   
-  // HTML del gráfico
+  // HTML del gráfico (Fix 2: Sanitización para prevenir XSS)
   const html = `
 <!DOCTYPE html>
 <html>
@@ -780,7 +681,7 @@ function enviarGrafico(chatId, mes = null, anio = null) {
       function drawChart() {
         var data = google.visualization.arrayToDataTable([
           ['Categoría', 'Monto'],
-          ${categoriasOrdenadas.map(c => `['${c[0]}', ${c[1]}]`).join(',\n          ')}
+          ${categoriasOrdenadas.map(c => `['${sanitizeForJS(c[0])}', ${c[1]}]`).join(',\n          ')}
         ]);
 
         var options = {
@@ -859,7 +760,7 @@ function enviarTecladoCategorias(chatId, monto, descripcion, fila) {
   sendMessageWithKeyboard(chatId, texto, teclado);
 }
 
-// --- OBTENER CATEGORÍAS ---
+// --- OBTENER CATEGORÍAS (Fix 13: Usa CATEGORIAS_DEFAULT) ---
 function getCategorias() {
   const props = PropertiesService.getUserProperties();
   const categoriasGuardadas = props.getProperty('CATEGORIAS');
@@ -868,33 +769,39 @@ function getCategorias() {
     return JSON.parse(categoriasGuardadas);
   }
   
-  return [
-    { nombre: 'Comida', emoji: '🍎' },
-    { nombre: 'Transporte', emoji: '🚌' },
-    { nombre: 'Hormiga', emoji: '☕' },
-    { nombre: 'Súper', emoji: '🛒' },
-    { nombre: 'Salud', emoji: '💊' },
-    { nombre: 'Ocio', emoji: '🎬' },
-    { nombre: 'Servicios', emoji: '💡' },
-    { nombre: 'Otros', emoji: '📦' }
-  ];
+  return CATEGORIAS_DEFAULT;
 }
 
-// --- PROCESAR BOTÓN ---
+// --- PROCESAR BOTÓN (Fix 3: Validación completa + Fix 8: LockService + Fix 14: Validación callback data) ---
 function procesarBoton(callbackQuery) {
-  const chatId = callbackQuery.message.chat.id;
+  const lock = LockService.getUserLock();
+  lock.waitLock(10000);
   
-  // ✅ AGREGAR: Validación de seguridad
-  if (!isAuthorized(chatId)) {
-    Logger.warning(`Intento no autorizado en botón: ${chatId}`);
-    return;
-  }
-  
-  const data = callbackQuery.data;
-  const messageId = callbackQuery.message.message_id;
-
-  if (data.startsWith('cat_')) {
+  try {
+    const chatId = callbackQuery.message.chat.id;
+    
+    // Fix 3: Validación completa con notificación al usuario
+    if (!isAuthorized(chatId)) {
+      Logger.warning(`Intento no autorizado en botón: ${chatId}`);
+      sendMessage(chatId, '🚫 Acceso denegado. Este bot es privado.');
+      return;
+    }
+    
+    const data = callbackQuery.data;
+    const messageId = callbackQuery.message.message_id;
+    
+    // Fix 14: Validación de callback data
+    if (!data || !data.startsWith('cat_')) {
+      Logger.warning('Callback data inválido: ' + data);
+      return;
+    }
+    
     const partesData = data.split('_');
+    if (partesData.length !== 3) {
+      Logger.warning('Formato de callback inválido: ' + data);
+      return;
+    }
+    
     const categoria = partesData[1];
     const fila = parseInt(partesData[2]);
     
@@ -920,42 +827,194 @@ function procesarBoton(callbackQuery) {
         parse_mode: 'Markdown'
       })
     });
+  } finally {
+    lock.releaseLock();
   }
 }
 
-// --- FUNCIONES DE ENVÍO ---
+// --- FUNCIONES DE ENVÍO (Fix 10: Manejo de errores en UrlFetchApp) ---
 function sendMessage(chatId, text) {
-  const config = getConfig();
-  UrlFetchApp.fetch(`https://api.telegram.org/bot${config.token}/sendMessage`, {
-    method: 'post',
-    contentType: 'application/json',
-    payload: JSON.stringify({ chat_id: chatId, text: text })
-  });
+  try {
+    const config = getConfig();
+    const response = UrlFetchApp.fetch(`https://api.telegram.org/bot${config.token}/sendMessage`, {
+      method: 'post',
+      contentType: 'application/json',
+      payload: JSON.stringify({ chat_id: chatId, text: text }),
+      muteHttpExceptions: true
+    });
+    
+    if (response.getResponseCode() !== 200) {
+      Logger.error('Error enviando mensaje: ' + response.getContentText());
+    }
+  } catch (error) {
+    Logger.error('Excepción en sendMessage: ' + error.toString());
+  }
 }
 
 function sendMessageMarkdown(chatId, text) {
-  const config = getConfig();
-  UrlFetchApp.fetch(`https://api.telegram.org/bot${config.token}/sendMessage`, {
-    method: 'post',
-    contentType: 'application/json',
-    payload: JSON.stringify({ 
-      chat_id: chatId, 
-      text: text,
-      parse_mode: 'Markdown'
-    })
-  });
+  try {
+    const config = getConfig();
+    const response = UrlFetchApp.fetch(`https://api.telegram.org/bot${config.token}/sendMessage`, {
+      method: 'post',
+      contentType: 'application/json',
+      payload: JSON.stringify({ 
+        chat_id: chatId, 
+        text: text,
+        parse_mode: 'Markdown'
+      }),
+      muteHttpExceptions: true
+    });
+    
+    if (response.getResponseCode() !== 200) {
+      Logger.error('Error enviando mensaje Markdown: ' + response.getContentText());
+    }
+  } catch (error) {
+    Logger.error('Excepción en sendMessageMarkdown: ' + error.toString());
+  }
 }
 
 function sendMessageWithKeyboard(chatId, text, keyboard) {
-  const config = getConfig();
-  UrlFetchApp.fetch(`https://api.telegram.org/bot${config.token}/sendMessage`, {
-    method: 'post',
-    contentType: 'application/json',
-    payload: JSON.stringify({ 
-      chat_id: chatId, 
-      text: text,
-      parse_mode: 'Markdown',
-      reply_markup: keyboard
-    })
-  });
+  try {
+    const config = getConfig();
+    const response = UrlFetchApp.fetch(`https://api.telegram.org/bot${config.token}/sendMessage`, {
+      method: 'post',
+      contentType: 'application/json',
+      payload: JSON.stringify({ 
+        chat_id: chatId, 
+        text: text,
+        parse_mode: 'Markdown',
+        reply_markup: keyboard
+      }),
+      muteHttpExceptions: true
+    });
+    
+    if (response.getResponseCode() !== 200) {
+      Logger.error('Error enviando mensaje con teclado: ' + response.getContentText());
+    }
+  } catch (error) {
+    Logger.error('Excepción en sendMessageWithKeyboard: ' + error.toString());
+  }
+}
+
+// ============================================================================
+// FIX 11: HANDLERS DE COMANDOS EXTRAÍDOS
+// ============================================================================
+
+// --- HANDLER /mes ---
+function handleComandoMes(chatId, text) {
+  const partes = text.split(' ');
+  if (partes.length > 1) {
+    const fechaPartes = partes[1].split('-');
+    if (fechaPartes.length === 2) {
+      const mes = parseInt(fechaPartes[0]) - 1;
+      const anio = parseInt(fechaPartes[1]);
+      if (!isNaN(mes) && !isNaN(anio) && mes >= 0 && mes <= 11 && anio >= 2020 && anio <= 2100) {
+        generarReporteMensual(chatId, mes, anio);
+        return;
+      }
+    }
+    sendMessage(chatId, '⚠️ Formato inválido. Usá: /mes MM-YYYY\nEjemplo: /mes 03-2026');
+    return;
+  }
+  generarReporteMensual(chatId);
+}
+
+// --- HANDLER /historial ---
+function handleComandoHistorial(chatId, text) {
+  const partes = text.split(' ');
+  const cantidad = Math.min(
+    partes.length > 1 ? parseInt(partes[1]) : 10,
+    50
+  );
+  mostrarHistorial(chatId, cantidad);
+}
+
+// --- HANDLER /exportar ---
+function handleComandoExportar(chatId, text) {
+  const partes = text.split(' ');
+  if (partes.length > 1) {
+    const fechaPartes = partes[1].split('-');
+    if (fechaPartes.length === 2) {
+      const mes = parseInt(fechaPartes[0]) - 1;
+      const anio = parseInt(fechaPartes[1]);
+      if (!isNaN(mes) && !isNaN(anio) && mes >= 0 && mes <= 11 && anio >= 2020 && anio <= 2100) {
+        exportarCSV(chatId, mes, anio);
+        return;
+      }
+    }
+    sendMessage(chatId, '⚠️ Formato: /exportar MM-YYYY\nEjemplo: /exportar 03-2026');
+    return;
+  }
+  exportarCSV(chatId);
+}
+
+// --- HANDLER /presupuesto ---
+function handleComandoPresupuesto(chatId, text) {
+  const partes = text.split(' ');
+  if (partes.length > 1) {
+    if (partes[1] === 'reset') {
+      resetearPresupuesto(chatId);
+      return;
+    }
+    const monto = parseFloat(partes[1].replace(',', '.'));
+    if (!isNaN(monto) && monto > 0) {
+      establecerPresupuesto(chatId, monto);
+      return;
+    }
+    sendMessage(chatId, '⚠️ Monto inválido. Ejemplo: /presupuesto 50000');
+    return;
+  }
+  verPresupuesto(chatId);
+}
+
+// --- HANDLER /grafico ---
+function handleComandoGrafico(chatId, text) {
+  const partes = text.split(' ');
+  if (partes.length > 1) {
+    const fechaPartes = partes[1].split('-');
+    if (fechaPartes.length === 2) {
+      const mes = parseInt(fechaPartes[0]) - 1;
+      const anio = parseInt(fechaPartes[1]);
+      if (!isNaN(mes) && !isNaN(anio) && mes >= 0 && mes <= 11 && anio >= 2020 && anio <= 2100) {
+        enviarGrafico(chatId, mes, anio);
+        return;
+      }
+    }
+    sendMessage(chatId, '⚠️ Formato: /grafico MM-YYYY\nEjemplo: /grafico 03-2026');
+    return;
+  }
+  enviarGrafico(chatId);
+}
+
+// --- HANDLER /categorias ---
+function handleComandoCategorias(chatId, text) {
+  if (text === '/categorias') {
+    mostrarCategorias(chatId);
+    return;
+  }
+  
+  if (text.startsWith('/categorias agregar')) {
+    const match = text.match(/\/categorias agregar\s+(\S+)\s+(.+)/);
+    if (match && match.length === 3) {
+      agregarCategoria(chatId, match[1], match[2].trim());
+      return;
+    }
+    sendMessage(chatId, '⚠️ Formato: /categorias agregar 🍕 Comida Rápida');
+    return;
+  }
+  
+  if (text.startsWith('/categorias eliminar')) {
+    const nombre = text.replace('/categorias eliminar', '').trim();
+    if (nombre) {
+      eliminarCategoria(chatId, nombre);
+      return;
+    }
+    sendMessage(chatId, '⚠️ Formato: /categorias eliminar Comida Rápida');
+    return;
+  }
+  
+  if (text === '/categorias reset') {
+    resetearCategorias(chatId);
+    return;
+  }
 }
