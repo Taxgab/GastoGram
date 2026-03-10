@@ -20,7 +20,10 @@ Las aplicaciones de finanzas personales suelen ser complejas de usar en el momen
 * **🚀 Ingreso sin fricción:** Escribe el monto y el detalle en un solo mensaje (ej: `1500 cafe`)
 * **📱 Categorización Rápida:** Botones integrados (Inline Keyboards) en el chat para clasificar el gasto al instante
 * **📊 Reportes en tiempo real:** Comando `/mes` para obtener un resumen del total gastado en el mes actual y un desglose por categoría
+* **📅 Reportes históricos:** Consultá cualquier mes con `/mes MM-YYYY`
 * **📜 Historial:** Comando `/historial` para ver los últimos gastos
+* **📥 Exportar CSV:** Descargá tus gastos en formato CSV para Excel/Google Sheets
+* **🏷️ Categorías personalizables:** Agregá, eliminá y gestioná tus propias categorías
 * **🇦🇷 Timezone Argentina:** Todas las fechas en hora local (ART)
 * **💾 Credenciales seguras:** Usando PropertiesService de Google Apps Script
 * **100% Serverless y Gratuito:** Utiliza Google Apps Script como puente, alojando la base de datos en Google Sheets
@@ -108,13 +111,27 @@ function setup() {
 
 ### Comandos disponibles
 
+#### 📊 Reportes
+
 | Comando | Descripción |
 |---------|-------------|
 | `/start` | Mensaje de bienvenida con instrucciones |
 | `/ayuda` o `/help` | Mostrar ayuda completa |
 | `/mes` | Ver resumen del mes actual con total y desglose por categoría |
+| `/mes 03-2026` | Ver resumen de marzo 2026 (cualquier mes) |
 | `/historial` | Ver últimos 10 gastos |
 | `/historial 20` | Ver últimos 20 gastos (o cualquier número) |
+| `/exportar` | Descargar CSV del mes actual |
+| `/exportar 03-2026` | Descargar CSV de marzo 2026 |
+
+#### 🏷️ Categorías
+
+| Comando | Descripción |
+|---------|-------------|
+| `/categorias` | Ver todas las categorías disponibles |
+| `/categorias agregar 🍕 Comida Rápida` | Agregar nueva categoría con emoji |
+| `/categorias eliminar Comida Rápida` | Eliminar una categoría existente |
+| `/categorias reset` | Volver a las 8 categorías originales |
 
 ### Registrar un gasto
 
@@ -222,7 +239,18 @@ Para obtener tu Telegram ID, podés usar el bot [@userinfobot](https://t.me/user
 
 ## 📝 Changelog
 
-### v2.0 (2026-03-10)
+### v3.0 (2026-03-10) - Fase 2: Funcionalidades Core
+- ✅ `/mes MM-YYYY` - Ver cualquier mes, no solo el actual
+- ✅ `/exportar` - Descargar gastos en CSV para Excel/Sheets
+- ✅ `/exportar MM-YYYY` - Exportar mes específico
+- ✅ `/categorias` - Ver todas las categorías
+- ✅ `/categorias agregar 🍕 Nombre` - Agregar categoría personalizada
+- ✅ `/categorias eliminar Nombre` - Eliminar categoría
+- ✅ `/categorias reset` - Volver a categorías originales
+- ✅ Categorías persistentes guardadas en PropertiesService
+- ✅ README actualizado con todos los comandos
+
+### v2.0 (2026-03-10) - Fase 1: Seguridad
 - ✅ Seguridad: Lista blanca de usuarios autorizados
 - ✅ Credenciales en PropertiesService (no hardcodeadas)
 - ✅ Comando `/start` con bienvenida

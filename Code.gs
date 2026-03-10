@@ -1,6 +1,6 @@
 /**
  * GastoGram - Bot de Telegram para registro de gastos personales
- * Versión 2.0 - Con seguridad mejorada
+ * Versión 3.0 - Fase 2: Funcionalidades Core
  * 
  * CONFIGURACIÓN INICIAL:
  * 1. Ejecutar setup() la primera vez para guardar credenciales
@@ -19,6 +19,19 @@ function setup() {
   props.setProperty('TELEGRAM_TOKEN', 'TU_TOKEN_DE_TELEGRAM_AQUI');
   props.setProperty('SHEET_ID', 'TU_ID_DE_HOJA_DE_CALCULO_AQUI');
   props.setProperty('WEBHOOK_URL', 'URL_DE_TU_WEB_APP_AQUI');
+  
+  // Inicializar categorías por defecto
+  const categoriasDefault = [
+    { nombre: 'Comida', emoji: '🍎' },
+    { nombre: 'Transporte', emoji: '🚌' },
+    { nombre: 'Hormiga', emoji: '☕' },
+    { nombre: 'Súper', emoji: '🛒' },
+    { nombre: 'Salud', emoji: '💊' },
+    { nombre: 'Ocio', emoji: '🎬' },
+    { nombre: 'Servicios', emoji: '💡' },
+    { nombre: 'Otros', emoji: '📦' }
+  ];
+  props.setProperty('CATEGORIAS', JSON.stringify(categoriasDefault));
   
   // Inicializar hoja de cálculo con encabezados
   const sheet = SpreadsheetApp.openById(props.getProperty('SHEET_ID')).getActiveSheet();
@@ -92,17 +105,93 @@ function procesarMensaje(message) {
     return;
   }
   
-  // COMANDO /mes
-  if (text.toLowerCase() === '/mes') {
+  // COMANDO /mes [MM-YYYY]
+  if (text.toLowerCase().startsWith('/mes')) {
+    const partes = text.split(' ');
+    if (partes.length > 1) {
+      // Parsear MM-YYYY
+      const fechaPartes = partes[1].split('-');
+      if (fechaPartes.length === 2) {
+        const mes = parseInt(fechaPartes[0]) - 1; // JavaScript usa 0-11
+        const anio = parseInt(fechaPartes[1]);
+        if (!isNaN(mes) && !isNaN(anio) && mes >= 0 && mes <= 11 && anio >= 2020 && anio <= 2100) {
+          generarReporteMensual(chatId, mes, anio);
+          return;
+        }
+      }
+      sendMessage(chatId, '⚠️ Formato inválido. Usá: /mes MM-YYYY\nEjemplo: /mes 03-2026');
+      return;
+    }
+    // Sin parámetros: mes actual
     generarReporteMensual(chatId);
     return;
   }
   
-  // COMANDO /historial (nuevo)
+  // COMANDO /historial [cantidad]
   if (text.startsWith('/historial')) {
     const partes = text.split(' ');
     const cantidad = partes.length > 1 ? parseInt(partes[1]) : 10;
     mostrarHistorial(chatId, cantidad);
+    return;
+  }
+  
+  // COMANDO /categorias
+  if (text === '/categorias') {
+    mostrarCategorias(chatId);
+    return;
+  }
+  
+  // COMANDO /categorias agregar [emoji] [nombre]
+  if (text.startsWith('/categorias agregar')) {
+    const match = text.match(/\/categorias agregar\s+(\S+)\s+(.+)/);
+    if (match && match.length === 3) {
+      agregarCategoria(chatId, match[1], match[2].trim());
+      return;
+    }
+    sendMessage(chatId, '⚠️ Formato: /categorias agregar 🍕 Comida Rápida');
+    return;
+  }
+  
+  // COMANDO /categorias eliminar [nombre]
+  if (text.startsWith('/categorias eliminar')) {
+    const nombre = text.replace('/categorias eliminar', '').trim();
+    if (nombre) {
+      eliminarCategoria(chatId, nombre);
+      return;
+    }
+    sendMessage(chatId, '⚠️ Formato: /categorias eliminar Comida Rápida');
+    return;
+  }
+  
+  // COMANDO /categorias reset
+  if (text === '/categorias reset') {
+    resetearCategorias(chatId);
+    return;
+  }
+  
+  // COMANDO /exportar
+  if (text === '/exportar') {
+    exportarCSV(chatId);
+    return;
+  }
+  
+  // COMANDO /exportar [MM-YYYY]
+  if (text.startsWith('/exportar')) {
+    const partes = text.split(' ');
+    if (partes.length > 1) {
+      const fechaPartes = partes[1].split('-');
+      if (fechaPartes.length === 2) {
+        const mes = parseInt(fechaPartes[0]) - 1;
+        const anio = parseInt(fechaPartes[1]);
+        if (!isNaN(mes) && !isNaN(anio) && mes >= 0 && mes <= 11) {
+          exportarCSV(chatId, mes, anio);
+          return;
+        }
+      }
+      sendMessage(chatId, '⚠️ Formato: /exportar MM-YYYY\nEjemplo: /exportar 03-2026');
+      return;
+    }
+    exportarCSV(chatId);
     return;
   }
   
@@ -123,7 +212,7 @@ function procesarMensaje(message) {
     const fila = sheet.getLastRow();
     enviarTecladoCategorias(chatId, monto, descripcion, fila);
   } else {
-    sendMessage(chatId, `⚠️ Formato incorrecto.\n\n👉 Ejemplo: 1500 cafe\n👉 Ejemplo: 2500.50 taxi al centro\n\n📊 Para ver tus gastos envía /mes\n📜 Para historial envía /historial\n❓ Para ayuda envía /ayuda`);
+    sendMessage(chatId, `⚠️ Formato incorrecto.\n\n👉 Ejemplo: 1500 cafe\n👉 Ejemplo: 2500.50 taxi al centro\n\n📊 Para ver tus gastos envía /mes\n📜 Para historial envía /historial\n🏷️ Para categorías envía /categorias\n📥 Para exportar envía /exportar\n❓ Para ayuda envía /ayuda`);
   }
 }
 
@@ -134,10 +223,20 @@ function enviarBienvenida(chatId) {
     `1️⃣ Envía un gasto: \`1500 cafe\`\n` +
     `2️⃣ Selecciona la categoría con los botones\n` +
     `3️⃣ ¡Listo! Tu gasto queda registrado\n\n` +
-    `📊 *Comandos disponibles:*\n` +
-    `/mes - Ver resumen del mes actual\n` +
-    `/historial - Ver últimos 10 gastos\n` +
-    `/historial 20 - Ver últimos 20 gastos\n` +
+    `📊 *Comandos disponibles:*\n\n` +
+    `*Reportes:*\n` +
+    `/mes - Resumen del mes actual\n` +
+    `/mes 03-2026 - Resumen de marzo 2026\n` +
+    `/historial - Últimos 10 gastos\n` +
+    `/historial 20 - Últimos 20 gastos\n` +
+    `/exportar - Descargar CSV del mes actual\n` +
+    `/exportar 03-2026 - CSV de marzo 2026\n\n` +
+    `*Categorías:*\n` +
+    `/categorias - Ver todas las categorías\n` +
+    `/categorias agregar 🍕 Comida Rápida - Agregar nueva\n` +
+    `/categorias eliminar Comida Rápida - Eliminar\n` +
+    `/categorias reset - Volver a las originales\n\n` +
+    `*Otros:*\n` +
     `/ayuda - Mostrar esta ayuda\n\n` +
     `🔒 Bot privado y seguro - Solo vos podés usarlo`;
   
@@ -182,16 +281,18 @@ function mostrarHistorial(chatId, cantidad) {
 }
 
 // --- GENERAR REPORTE MENSUAL ---
-function generarReporteMensual(chatId) {
+function generarReporteMensual(chatId, mes = null, anio = null) {
   const config = getConfig();
   const sheet = SpreadsheetApp.openById(config.sheetId).getActiveSheet();
   const data = sheet.getDataRange().getValues();
   
-  // Obtener fecha actual en timezone AR
-  const fechaActual = new Date();
-  const fechaAR = new Date(fechaActual.toLocaleString('en-US', {timeZone: TIMEZONE}));
-  const mesActual = fechaAR.getMonth();
-  const anioActual = fechaAR.getFullYear();
+  // Si no se especifica mes/año, usar el actual
+  if (mes === null || anio === null) {
+    const fechaActual = new Date();
+    const fechaAR = new Date(fechaActual.toLocaleString('en-US', {timeZone: TIMEZONE}));
+    mes = fechaAR.getMonth();
+    anio = fechaAR.getFullYear();
+  }
   
   let totalMes = 0;
   let categorias = {};
@@ -210,7 +311,7 @@ function generarReporteMensual(chatId) {
     }
     
     if (!isNaN(fechaGasto.getTime())) {
-      if (fechaGasto.getMonth() === mesActual && fechaGasto.getFullYear() === anioActual) {
+      if (fechaGasto.getMonth() === mes && fechaGasto.getFullYear() === anio) {
         const monto = parseFloat(fila[1]);
         const categoria = fila[3] || 'Sin categoría';
         
@@ -224,11 +325,11 @@ function generarReporteMensual(chatId) {
   }
 
   if (totalMes === 0) {
-    sendMessage(chatId, `📊 No hay gastos registrados en ${obtenerNombreMes(mesActual)}.`);
+    sendMessage(chatId, `📊 No hay gastos registrados en ${obtenerNombreMes(mes)} ${anio}.`);
     return;
   }
 
-  let mensaje = `📊 *Resumen de ${obtenerNombreMes(mesActual)} ${anioActual}*\n\n`;
+  let mensaje = `📊 *Resumen de ${obtenerNombreMes(mes)} ${anio}*\n\n`;
   mensaje += `💰 *Total Gastado: $${totalMes.toFixed(2)}*\n`;
   mensaje += `📦 Gastos: ${gastosContabilizados}\n\n`;
   mensaje += `📈 *Por Categoría:*\n`;
@@ -242,6 +343,148 @@ function generarReporteMensual(chatId) {
   });
 
   sendMessageMarkdown(chatId, mensaje);
+}
+
+// --- MOSTRAR CATEGORÍAS ---
+function mostrarCategorias(chatId) {
+  const categorias = getCategorias();
+  
+  let mensaje = `🏷️ *Tus categorías:*\n\n`;
+  
+  categorias.forEach((cat, index) => {
+    mensaje += `${index + 1}. ${cat.emoji} ${cat.nombre}\n`;
+  });
+  
+  mensaje += `\n💡 *Consejo:* Usá /categorias agregar 🍕 Pizza para agregar una nueva.`;
+  
+  sendMessageMarkdown(chatId, mensaje);
+}
+
+// --- AGREGAR CATEGORÍA ---
+function agregarCategoria(chatId, emoji, nombre) {
+  const props = PropertiesService.getUserProperties();
+  const categorias = getCategorias();
+  
+  // Verificar si ya existe
+  const existe = categorias.some(c => c.nombre.toLowerCase() === nombre.toLowerCase());
+  if (existe) {
+    sendMessage(chatId, `⚠️ La categoría "${nombre}" ya existe.`);
+    return;
+  }
+  
+  // Agregar nueva categoría
+  categorias.push({ nombre: nombre, emoji: emoji });
+  props.setProperty('CATEGORIAS', JSON.stringify(categorias));
+  
+  sendMessage(chatId, `✅ Categoría agregada: ${emoji} ${nombre}\n\nAhora tenés ${categorias.length} categorías.`);
+}
+
+// --- ELIMINAR CATEGORÍA ---
+function eliminarCategoria(chatId, nombre) {
+  const props = PropertiesService.getUserProperties();
+  const categorias = getCategorias();
+  
+  // Filtrar la categoría a eliminar
+  const nuevasCategorias = categorias.filter(c => c.nombre.toLowerCase() !== nombre.toLowerCase());
+  
+  if (nuevasCategorias.length === categorias.length) {
+    sendMessage(chatId, `⚠️ La categoría "${nombre}" no existe.`);
+    return;
+  }
+  
+  props.setProperty('CATEGORIAS', JSON.stringify(nuevasCategorias));
+  
+  sendMessage(chatId, `🗑️ Categoría eliminada: ${nombre}\n\nAhora tenés ${nuevasCategorias.length} categorías.`);
+}
+
+// --- RESETEAR CATEGORÍAS ---
+function resetearCategorias(chatId) {
+  const props = PropertiesService.getUserProperties();
+  const categoriasDefault = [
+    { nombre: 'Comida', emoji: '🍎' },
+    { nombre: 'Transporte', emoji: '🚌' },
+    { nombre: 'Hormiga', emoji: '☕' },
+    { nombre: 'Súper', emoji: '🛒' },
+    { nombre: 'Salud', emoji: '💊' },
+    { nombre: 'Ocio', emoji: '🎬' },
+    { nombre: 'Servicios', emoji: '💡' },
+    { nombre: 'Otros', emoji: '📦' }
+  ];
+  
+  props.setProperty('CATEGORIAS', JSON.stringify(categoriasDefault));
+  
+  sendMessage(chatId, `🔄 Categorías reseteadas a las originales (${categoriasDefault.length} categorías).`);
+}
+
+// --- EXPORTAR CSV ---
+function exportarCSV(chatId, mes = null, anio = null) {
+  const config = getConfig();
+  const sheet = SpreadsheetApp.openById(config.sheetId).getActiveSheet();
+  const data = sheet.getDataRange().getValues();
+  
+  // Si no se especifica mes/año, usar el actual
+  if (mes === null || anio === null) {
+    const fechaActual = new Date();
+    const fechaAR = new Date(fechaActual.toLocaleString('en-US', {timeZone: TIMEZONE}));
+    mes = fechaAR.getMonth();
+    anio = fechaAR.getFullYear();
+  }
+  
+  // Filtrar gastos del mes especificado
+  const gastosFiltrados = [['Fecha', 'Monto', 'Descripción', 'Categoría']]; // Encabezado
+  
+  for (let i = 1; i < data.length; i++) {
+    const fila = data[i];
+    const fechaCelda = fila[0];
+    
+    let fechaGasto;
+    if (fechaCelda instanceof Date) {
+      fechaGasto = fechaCelda;
+    } else {
+      fechaGasto = new Date(fechaCelda);
+    }
+    
+    if (!isNaN(fechaGasto.getTime())) {
+      if (fechaGasto.getMonth() === mes && fechaGasto.getFullYear() === anio) {
+        gastosFiltrados.push([fila[0], fila[1], fila[2], fila[3]]);
+      }
+    }
+  }
+  
+  if (gastosFiltrados.length <= 1) {
+    sendMessage(chatId, `📊 No hay gastos para exportar en ${obtenerNombreMes(mes)} ${anio}.`);
+    return;
+  }
+  
+  // Crear CSV
+  let csv = '';
+  gastosFiltrados.forEach(fila => {
+    csv += fila.map(celda => {
+      // Escapar comillas y envolver en comillas si hay comas
+      const texto = String(celda).replace(/"/g, '""');
+      return `"${texto}"`;
+    }).join(',') + '\n';
+  });
+  
+  // Guardar CSV en Google Drive
+  const nombreArchivo = `gastos_${obtenerNombreMes(mes).toLowerCase()}_${anio}.csv`;
+  const blob = Utilities.newBlob(csv, 'text/csv', nombreArchivo);
+  const archivo = DriveApp.createFile(blob);
+  
+  // Enviar archivo por Telegram
+  const url = `https://api.telegram.org/bot${config.token}/sendDocument`;
+  const formData = {
+    chat_id: chatId,
+    document: archivo.getBlob()
+  };
+  
+  UrlFetchApp.fetch(url, {
+    method: 'post',
+    contentType: 'multipart/form-data',
+    payload: formData
+  });
+  
+  sendMessage(chatId, `📥 Archivo exportado: ${nombreArchivo}\n\n📊 Total de gastos: ${gastosFiltrados.length - 1}`);
 }
 
 // --- OBTENER NOMBRE DEL MES ---
