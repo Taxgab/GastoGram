@@ -1,6 +1,6 @@
 # 💸 Gastogram - Bot de Gastos Personales
 
-**Versión:** 2.0 (Con seguridad mejorada)
+**Versión:** 4.0 - Fase 3: Reportes Avanzados
 
 Un bot de Telegram serverless para registrar gastos diarios y "gastos hormiga" sin fricción, conectado directamente a Google Sheets.
 
@@ -24,6 +24,9 @@ Las aplicaciones de finanzas personales suelen ser complejas de usar en el momen
 * **📜 Historial:** Comando `/historial` para ver los últimos gastos
 * **📥 Exportar CSV:** Descargá tus gastos en formato CSV para Excel/Google Sheets
 * **🏷️ Categorías personalizables:** Agregá, eliminá y gestioná tus propias categorías
+* **📊 Gráficos de categorías:** Visualizá tu distribución de gastos con `/grafico`
+* **💰 Presupuesto mensual:** Establecé un límite y recibí alertas al 80% y 100%
+* **🔔 Alertas automáticas:** Te avisamos cuando te acercás al límite
 * **🇦🇷 Timezone Argentina:** Todas las fechas en hora local (ART)
 * **💾 Credenciales seguras:** Usando PropertiesService de Google Apps Script
 * **100% Serverless y Gratuito:** Utiliza Google Apps Script como puente, alojando la base de datos en Google Sheets
@@ -111,7 +114,7 @@ function setup() {
 
 ### Comandos disponibles
 
-#### 📊 Reportes
+#### 📊 Reportes y Gráficos
 
 | Comando | Descripción |
 |---------|-------------|
@@ -123,6 +126,8 @@ function setup() {
 | `/historial 20` | Ver últimos 20 gastos (o cualquier número) |
 | `/exportar` | Descargar CSV del mes actual |
 | `/exportar 03-2026` | Descargar CSV de marzo 2026 |
+| `/grafico` | Ver gráfico de categorías del mes actual |
+| `/grafico 03-2026` | Gráfico de categorías de marzo 2026 |
 
 #### 🏷️ Categorías
 
@@ -132,6 +137,15 @@ function setup() {
 | `/categorias agregar 🍕 Comida Rápida` | Agregar nueva categoría con emoji |
 | `/categorias eliminar Comida Rápida` | Eliminar una categoría existente |
 | `/categorias reset` | Volver a las 8 categorías originales |
+
+#### 💰 Presupuesto
+
+| Comando | Descripción |
+|---------|-------------|
+| `/presupuesto` | Ver presupuesto actual y progreso |
+| `/presupuesto 50000` | Establecer presupuesto de $50000 |
+| `/presupuesto reset` | Eliminar presupuesto y alertas |
+| `/alerta` | Ver estado de alertas (80%, 100%) |
 
 ### Registrar un gasto
 
@@ -238,6 +252,18 @@ Para obtener tu Telegram ID, podés usar el bot [@userinfobot](https://t.me/user
 ---
 
 ## 📝 Changelog
+
+### v4.0 (2026-03-10) - Fase 3: Reportes Avanzados
+- ✅ `/grafico` - Gráfico de categorías del mes actual
+- ✅ `/grafico MM-YYYY` - Gráfico de mes específico
+- ✅ `/presupuesto` - Ver presupuesto y progreso con barra visual
+- ✅ `/presupuesto [monto]` - Establecer presupuesto mensual
+- ✅ `/presupuesto reset` - Eliminar presupuesto
+- ✅ `/alerta` - Ver estado de alertas
+- ✅ Alerta automática al 80% del presupuesto
+- ✅ Alerta crítica al 100% del presupuesto
+- ✅ Alertas persistentes por mes (no se repiten)
+- ✅ Mensajes de presupuesto con formato AR ($1.000,00)
 
 ### v3.0 (2026-03-10) - Fase 2: Funcionalidades Core
 - ✅ `/mes MM-YYYY` - Ver cualquier mes, no solo el actual

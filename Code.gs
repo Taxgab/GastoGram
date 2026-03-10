@@ -1,6 +1,6 @@
 /**
  * GastoGram - Bot de Telegram para registro de gastos personales
- * Versión 3.0 - Fase 2: Funcionalidades Core
+ * Versión 4.0 - Fase 3: Reportes Avanzados
  * 
  * CONFIGURACIÓN INICIAL:
  * 1. Ejecutar setup() la primera vez para guardar credenciales
@@ -32,6 +32,11 @@ function setup() {
     { nombre: 'Otros', emoji: '📦' }
   ];
   props.setProperty('CATEGORIAS', JSON.stringify(categoriasDefault));
+  
+  // Inicializar presupuesto default (0 = sin presupuesto)
+  if (!props.getProperty('PRESUPUESTO')) {
+    props.setProperty('PRESUPUESTO', '0');
+  }
   
   // Inicializar hoja de cálculo con encabezados
   const sheet = SpreadsheetApp.openById(props.getProperty('SHEET_ID')).getActiveSheet();
@@ -109,10 +114,9 @@ function procesarMensaje(message) {
   if (text.toLowerCase().startsWith('/mes')) {
     const partes = text.split(' ');
     if (partes.length > 1) {
-      // Parsear MM-YYYY
       const fechaPartes = partes[1].split('-');
       if (fechaPartes.length === 2) {
-        const mes = parseInt(fechaPartes[0]) - 1; // JavaScript usa 0-11
+        const mes = parseInt(fechaPartes[0]) - 1;
         const anio = parseInt(fechaPartes[1]);
         if (!isNaN(mes) && !isNaN(anio) && mes >= 0 && mes <= 11 && anio >= 2020 && anio <= 2100) {
           generarReporteMensual(chatId, mes, anio);
@@ -122,7 +126,6 @@ function procesarMensaje(message) {
       sendMessage(chatId, '⚠️ Formato inválido. Usá: /mes MM-YYYY\nEjemplo: /mes 03-2026');
       return;
     }
-    // Sin parámetros: mes actual
     generarReporteMensual(chatId);
     return;
   }
@@ -195,6 +198,54 @@ function procesarMensaje(message) {
     return;
   }
   
+  // COMANDO /presupuesto [monto]
+  if (text.startsWith('/presupuesto')) {
+    const partes = text.split(' ');
+    if (partes.length > 1) {
+      const monto = parseFloat(partes[1].replace(',', '.'));
+      if (!isNaN(monto) && monto > 0) {
+        establecerPresupuesto(chatId, monto);
+        return;
+      }
+      sendMessage(chatId, '⚠️ Monto inválido. Ejemplo: /presupuesto 50000');
+      return;
+    }
+    verPresupuesto(chatId);
+    return;
+  }
+  
+  // COMANDO /presupuesto reset
+  if (text === '/presupuesto reset') {
+    resetearPresupuesto(chatId);
+    return;
+  }
+  
+  // COMANDO /grafico [MM-YYYY]
+  if (text === '/grafico' || text.startsWith('/grafico ')) {
+    const partes = text.split(' ');
+    if (partes.length > 1) {
+      const fechaPartes = partes[1].split('-');
+      if (fechaPartes.length === 2) {
+        const mes = parseInt(fechaPartes[0]) - 1;
+        const anio = parseInt(fechaPartes[1]);
+        if (!isNaN(mes) && !isNaN(anio) && mes >= 0 && mes <= 11) {
+          enviarGrafico(chatId, mes, anio);
+          return;
+        }
+      }
+      sendMessage(chatId, '⚠️ Formato: /grafico MM-YYYY\nEjemplo: /grafico 03-2026');
+      return;
+    }
+    enviarGrafico(chatId);
+    return;
+  }
+  
+  // COMANDO /alerta - Ver estado de alertas de presupuesto
+  if (text === '/alerta') {
+    verEstadoAlertas(chatId);
+    return;
+  }
+  
   // PROCESAR GASTO
   const date = new Date(message.date * 1000);
   const partes = text.split(' ');
@@ -210,9 +261,14 @@ function procesarMensaje(message) {
     
     sheet.appendRow([fechaAR, monto, descripcion, '⏳ Pendiente', chatId]);
     const fila = sheet.getLastRow();
-    enviarTecladoCategorias(chatId, monto, descripcion, fila);
+    
+    // Verificar presupuesto después de registrar
+    const mensajeGasto = enviarTecladoCategorias(chatId, monto, descripcion, fila);
+    
+    // Verificar si supera presupuesto
+    verificarPresupuesto(chatId);
   } else {
-    sendMessage(chatId, `⚠️ Formato incorrecto.\n\n👉 Ejemplo: 1500 cafe\n👉 Ejemplo: 2500.50 taxi al centro\n\n📊 Para ver tus gastos envía /mes\n📜 Para historial envía /historial\n🏷️ Para categorías envía /categorias\n📥 Para exportar envía /exportar\n❓ Para ayuda envía /ayuda`);
+    sendMessage(chatId, `⚠️ Formato incorrecto.\n\n👉 Ejemplo: 1500 cafe\n👉 Ejemplo: 2500.50 taxi al centro\n\n📊 Para ver tus gastos envía /mes\n📜 Para historial envía /historial\n🏷️ Para categorías envía /categorias\n📥 Para exportar envía /exportar\n💰 Para presupuesto envía /presupuesto\n📊 Para gráfico envía /grafico\n❓ Para ayuda envía /ayuda`);
   }
 }
 
@@ -230,7 +286,14 @@ function enviarBienvenida(chatId) {
     `/historial - Últimos 10 gastos\n` +
     `/historial 20 - Últimos 20 gastos\n` +
     `/exportar - Descargar CSV del mes actual\n` +
-    `/exportar 03-2026 - CSV de marzo 2026\n\n` +
+    `/exportar 03-2026 - CSV de marzo 2026\n` +
+    `/grafico - Gráfico de categorías del mes\n` +
+    `/grafico 03-2026 - Gráfico de marzo 2026\n\n` +
+    `*Presupuesto:*\n` +
+    `/presupuesto - Ver presupuesto y progreso\n` +
+    `/presupuesto 50000 - Establecer presupuesto de $50000\n` +
+    `/presupuesto reset - Eliminar presupuesto\n` +
+    `/alerta - Ver estado de alertas\n\n` +
     `*Categorías:*\n` +
     `/categorias - Ver todas las categorías\n` +
     `/categorias agregar 🍕 Comida Rápida - Agregar nueva\n` +
@@ -259,7 +322,6 @@ function mostrarHistorial(chatId, cantidad) {
     return;
   }
   
-  // Obtener últimos N gastos (excluyendo encabezado)
   const ultimosGastos = data.slice(1).reverse().slice(0, cantidad);
   
   let mensaje = `📜 *Últimos ${ultimosGastos.length} gastos:*\n\n`;
@@ -270,7 +332,6 @@ function mostrarHistorial(chatId, cantidad) {
     const descripcion = fila[2];
     const categoria = fila[3];
     
-    // Formatear categoría
     const catIcon = categoria === '⏳ Pendiente' ? '⏳' : '✅';
     
     mensaje += `${index + 1}. *$${monto}* - ${descripcion}\n`;
@@ -286,7 +347,6 @@ function generarReporteMensual(chatId, mes = null, anio = null) {
   const sheet = SpreadsheetApp.openById(config.sheetId).getActiveSheet();
   const data = sheet.getDataRange().getValues();
   
-  // Si no se especifica mes/año, usar el actual
   if (mes === null || anio === null) {
     const fechaActual = new Date();
     const fechaAR = new Date(fechaActual.toLocaleString('en-US', {timeZone: TIMEZONE}));
@@ -298,11 +358,10 @@ function generarReporteMensual(chatId, mes = null, anio = null) {
   let categorias = {};
   let gastosContabilizados = 0;
 
-  for (let i = 1; i < data.length; i++) { // Empezar en 1 para saltar encabezado
+  for (let i = 1; i < data.length; i++) {
     const fila = data[i];
     const fechaCelda = fila[0];
     
-    // Parsear fecha (puede ser string o Date)
     let fechaGasto;
     if (fechaCelda instanceof Date) {
       fechaGasto = fechaCelda;
@@ -334,7 +393,6 @@ function generarReporteMensual(chatId, mes = null, anio = null) {
   mensaje += `📦 Gastos: ${gastosContabilizados}\n\n`;
   mensaje += `📈 *Por Categoría:*\n`;
   
-  // Ordenar categorías por monto (mayor a menor)
   const categoriasOrdenadas = Object.entries(categorias).sort((a, b) => b[1] - a[1]);
   
   categoriasOrdenadas.forEach(([cat, monto]) => {
@@ -365,14 +423,12 @@ function agregarCategoria(chatId, emoji, nombre) {
   const props = PropertiesService.getUserProperties();
   const categorias = getCategorias();
   
-  // Verificar si ya existe
   const existe = categorias.some(c => c.nombre.toLowerCase() === nombre.toLowerCase());
   if (existe) {
     sendMessage(chatId, `⚠️ La categoría "${nombre}" ya existe.`);
     return;
   }
   
-  // Agregar nueva categoría
   categorias.push({ nombre: nombre, emoji: emoji });
   props.setProperty('CATEGORIAS', JSON.stringify(categorias));
   
@@ -384,7 +440,6 @@ function eliminarCategoria(chatId, nombre) {
   const props = PropertiesService.getUserProperties();
   const categorias = getCategorias();
   
-  // Filtrar la categoría a eliminar
   const nuevasCategorias = categorias.filter(c => c.nombre.toLowerCase() !== nombre.toLowerCase());
   
   if (nuevasCategorias.length === categorias.length) {
@@ -422,7 +477,6 @@ function exportarCSV(chatId, mes = null, anio = null) {
   const sheet = SpreadsheetApp.openById(config.sheetId).getActiveSheet();
   const data = sheet.getDataRange().getValues();
   
-  // Si no se especifica mes/año, usar el actual
   if (mes === null || anio === null) {
     const fechaActual = new Date();
     const fechaAR = new Date(fechaActual.toLocaleString('en-US', {timeZone: TIMEZONE}));
@@ -430,8 +484,7 @@ function exportarCSV(chatId, mes = null, anio = null) {
     anio = fechaAR.getFullYear();
   }
   
-  // Filtrar gastos del mes especificado
-  const gastosFiltrados = [['Fecha', 'Monto', 'Descripción', 'Categoría']]; // Encabezado
+  const gastosFiltrados = [['Fecha', 'Monto', 'Descripción', 'Categoría']];
   
   for (let i = 1; i < data.length; i++) {
     const fila = data[i];
@@ -456,22 +509,18 @@ function exportarCSV(chatId, mes = null, anio = null) {
     return;
   }
   
-  // Crear CSV
   let csv = '';
   gastosFiltrados.forEach(fila => {
     csv += fila.map(celda => {
-      // Escapar comillas y envolver en comillas si hay comas
       const texto = String(celda).replace(/"/g, '""');
       return `"${texto}"`;
     }).join(',') + '\n';
   });
   
-  // Guardar CSV en Google Drive
   const nombreArchivo = `gastos_${obtenerNombreMes(mes).toLowerCase()}_${anio}.csv`;
   const blob = Utilities.newBlob(csv, 'text/csv', nombreArchivo);
   const archivo = DriveApp.createFile(blob);
   
-  // Enviar archivo por Telegram
   const url = `https://api.telegram.org/bot${config.token}/sendDocument`;
   const formData = {
     chat_id: chatId,
@@ -487,6 +536,283 @@ function exportarCSV(chatId, mes = null, anio = null) {
   sendMessage(chatId, `📥 Archivo exportado: ${nombreArchivo}\n\n📊 Total de gastos: ${gastosFiltrados.length - 1}`);
 }
 
+// --- ESTABLECER PRESUPUESTO ---
+function establecerPresupuesto(chatId, monto) {
+  const props = PropertiesService.getUserProperties();
+  props.setProperty('PRESUPUESTO', monto.toString());
+  
+  sendMessageMarkdown(chatId, `💰 *Presupuesto establecido: $${monto.toLocaleString('es-AR')}*\n\n📊 Te avisaré cuando:\n• Alcanzes el 80% ($${(monto * 0.8).toLocaleString('es-AR')})\n• Alcanzes el 100% ($${monto.toLocaleString('es-AR')})\n\nUsá /presupuesto para ver tu progreso.`);
+}
+
+// --- VER PRESUPUESTO ---
+function verPresupuesto(chatId) {
+  const props = PropertiesService.getUserProperties();
+  const presupuesto = parseFloat(props.getProperty('PRESUPUESTO') || '0');
+  
+  if (presupuesto <= 0) {
+    sendMessage(chatId, '📊 No tenés un presupuesto establecido.\n\nUsá /presupuesto [monto] para establecer uno.\nEjemplo: /presupuesto 50000');
+    return;
+  }
+  
+  const config = getConfig();
+  const sheet = SpreadsheetApp.openById(config.sheetId).getActiveSheet();
+  const data = sheet.getDataRange().getValues();
+  
+  const fechaActual = new Date();
+  const fechaAR = new Date(fechaActual.toLocaleString('en-US', {timeZone: TIMEZONE}));
+  const mesActual = fechaAR.getMonth();
+  const anioActual = fechaAR.getFullYear();
+  
+  let totalMes = 0;
+  for (let i = 1; i < data.length; i++) {
+    const fila = data[i];
+    const fechaCelda = fila[0];
+    
+    let fechaGasto;
+    if (fechaCelda instanceof Date) {
+      fechaGasto = fechaCelda;
+    } else {
+      fechaGasto = new Date(fechaCelda);
+    }
+    
+    if (!isNaN(fechaGasto.getTime())) {
+      if (fechaGasto.getMonth() === mesActual && fechaGasto.getFullYear() === anioActual) {
+        const monto = parseFloat(fila[1]);
+        if (!isNaN(monto)) {
+          totalMes += monto;
+        }
+      }
+    }
+  }
+  
+  const porcentaje = ((totalMes / presupuesto) * 100).toFixed(1);
+  const restante = presupuesto - totalMes;
+  
+  let estado = '';
+  if (porcentaje >= 100) {
+    estado = '🚨 *¡PRESUPUESTO AGOTADO!*';
+  } else if (porcentaje >= 80) {
+    estado = '⚠️ *Atención: 80% alcanzado*';
+  } else if (porcentaje >= 50) {
+    estado = '📊 *Mitad del presupuesto usado*';
+  } else {
+    estado = '✅ *Presupuesto en rango seguro*';
+  }
+  
+  let mensaje = `💰 *Estado del Presupuesto*\n\n`;
+  mensaje += `${estado}\n\n`;
+  mensaje += `📊 Gastado: *$${totalMes.toLocaleString('es-AR')}* (${porcentaje}%)\n`;
+  mensaje += `💵 Presupuesto: *$${presupuesto.toLocaleString('es-AR')}*\n`;
+  mensaje += `📈 Restante: *$${restante.toLocaleString('es-AR')}*\n\n`;
+  
+  // Barra de progreso
+  const barrasLlenas = Math.floor(porcentaje / 10);
+  const barrasVacias = 10 - barrasLlenas;
+  mensaje += `🔵 ${'█'.repeat(barrasLlenas)}${'░'.repeat(barrasVacias)} ${porcentaje}%\n`;
+  
+  sendMessageMarkdown(chatId, mensaje);
+}
+
+// --- RESETEAR PRESUPUESTO ---
+function resetearPresupuesto(chatId) {
+  const props = PropertiesService.getUserProperties();
+  props.setProperty('PRESUPUESTO', '0');
+  
+  sendMessage(chatId, '🔄 Presupuesto eliminado.\n\nYa no recibirás alertas de presupuesto.');
+}
+
+// --- VERIFICAR PRESUPUESTO (después de cada gasto) ---
+function verificarPresupuesto(chatId) {
+  const props = PropertiesService.getUserProperties();
+  const presupuesto = parseFloat(props.getProperty('PRESUPUESTO') || '0');
+  
+  if (presupuesto <= 0) return; // Sin presupuesto configurado
+  
+  const config = getConfig();
+  const sheet = SpreadsheetApp.openById(config.sheetId).getActiveSheet();
+  const data = sheet.getDataRange().getValues();
+  
+  const fechaActual = new Date();
+  const fechaAR = new Date(fechaActual.toLocaleString('en-US', {timeZone: TIMEZONE}));
+  const mesActual = fechaAR.getMonth();
+  const anioActual = fechaAR.getFullYear();
+  
+  let totalMes = 0;
+  for (let i = 1; i < data.length; i++) {
+    const fila = data[i];
+    const fechaCelda = fila[0];
+    
+    let fechaGasto;
+    if (fechaCelda instanceof Date) {
+      fechaGasto = fechaCelda;
+    } else {
+      fechaGasto = new Date(fechaCelda);
+    }
+    
+    if (!isNaN(fechaGasto.getTime())) {
+      if (fechaGasto.getMonth() === mesActual && fechaGasto.getFullYear() === anioActual) {
+        const monto = parseFloat(fila[1]);
+        if (!isNaN(monto)) {
+          totalMes += monto;
+        }
+      }
+    }
+  }
+  
+  const porcentaje = (totalMes / presupuesto) * 100;
+  
+  // Enviar alerta solo en hitos específicos (80%, 100%)
+  // Usamos una propiedad para trackear si ya enviamos la alerta
+  const alerta80Enviada = props.getProperty('ALERTA_80_ENVIADA') === 'true';
+  const alerta100Enviada = props.getProperty('ALERTA_100_ENVIADA') === 'true';
+  
+  if (porcentaje >= 100 && !alerta100Enviada) {
+    sendMessageMarkdown(chatId, `🚨 *¡ALERTA CRÍTICA!*\n\n💸 Alcanzaste el 100% de tu presupuesto.\n\n📊 Total gastado: *$${totalMes.toLocaleString('es-AR')}*\n💰 Presupuesto: *$${presupuesto.toLocaleString('es-AR')}*\n\n⚠️ Cada gasto adicional será fuera de presupuesto.`);
+    props.setProperty('ALERTA_100_ENVIADA', 'true');
+  } else if (porcentaje >= 80 && !alerta80Enviada) {
+    sendMessageMarkdown(chatId, `⚠️ *ALERTA DE PRESUPUESTO*\n\n📊 Alcanzaste el 80% de tu presupuesto.\n\n💵 Gastado: *$${totalMes.toLocaleString('es-AR')}*\n💰 Presupuesto: *$${presupuesto.toLocaleString('es-AR')}*\n📈 Restante: *$${(presupuesto - totalMes).toLocaleString('es-AR')}*\n\n💡 Revisá tus gastos con /mes para ver en qué estás gastando más.`);
+    props.setProperty('ALERTA_80_ENVIADA', 'true');
+  }
+}
+
+// --- VER ESTADO DE ALERTAS ---
+function verEstadoAlertas(chatId) {
+  const props = PropertiesService.getUserProperties();
+  const presupuesto = parseFloat(props.getProperty('PRESUPUESTO') || '0');
+  
+  if (presupuesto <= 0) {
+    sendMessage(chatId, '📊 No tenés presupuesto configurado.\n\nLas alertas se activan cuando establecés un presupuesto con /presupuesto [monto].');
+    return;
+  }
+  
+  const alerta80 = props.getProperty('ALERTA_80_ENVIADA') === 'true';
+  const alerta100 = props.getProperty('ALERTA_100_ENVIADA') === 'true';
+  
+  let mensaje = `🔔 *Estado de Alertas*\n\n`;
+  mensaje += `💰 Presupuesto: $${presupuesto.toLocaleString('es-AR')}\n\n`;
+  mensaje += `⚠️ Alerta 80%: ${alerta80 ? '✅ Enviada' : '⏳ Pendiente'}\n`;
+  mensaje += `🚨 Alerta 100%: ${alerta100 ? '✅ Enviada' : '⏳ Pendiente'}\n\n`;
+  mensaje += `💡 Las alertas se resetean automáticamente cada mes.`;
+  
+  sendMessageMarkdown(chatId, mensaje);
+}
+
+// --- ENVIAR GRÁFICO ---
+function enviarGrafico(chatId, mes = null, anio = null) {
+  const config = getConfig();
+  const sheet = SpreadsheetApp.openById(config.sheetId).getActiveSheet();
+  const data = sheet.getDataRange().getValues();
+  
+  if (mes === null || anio === null) {
+    const fechaActual = new Date();
+    const fechaAR = new Date(fechaActual.toLocaleString('en-US', {timeZone: TIMEZONE}));
+    mes = fechaAR.getMonth();
+    anio = fechaAR.getFullYear();
+  }
+  
+  let categorias = {};
+  let totalMes = 0;
+
+  for (let i = 1; i < data.length; i++) {
+    const fila = data[i];
+    const fechaCelda = fila[0];
+    
+    let fechaGasto;
+    if (fechaCelda instanceof Date) {
+      fechaGasto = fechaCelda;
+    } else {
+      fechaGasto = new Date(fechaCelda);
+    }
+    
+    if (!isNaN(fechaGasto.getTime())) {
+      if (fechaGasto.getMonth() === mes && fechaGasto.getFullYear() === anio) {
+        const monto = parseFloat(fila[1]);
+        const categoria = fila[3] || 'Sin categoría';
+        
+        if (!isNaN(monto)) {
+          totalMes += monto;
+          categorias[categoria] = (categorias[categoria] || 0) + monto;
+        }
+      }
+    }
+  }
+
+  if (totalMes === 0) {
+    sendMessage(chatId, `📊 No hay gastos para graficar en ${obtenerNombreMes(mes)} ${anio}.`);
+    return;
+  }
+
+  // Ordenar categorías
+  const categoriasOrdenadas = Object.entries(categorias).sort((a, b) => b[1] - a[1]);
+  
+  // Crear gráfico de barras con Google Charts
+  const categoriasNombres = categoriasOrdenadas.map(c => c[0]);
+  const categoriasMontos = categoriasOrdenadas.map(c => c[1]);
+  
+  // HTML del gráfico
+  const html = `
+<!DOCTYPE html>
+<html>
+  <head>
+    <script type="text/javascript" src="https://www.gstatic.com/charts/loader.js"></script>
+    <script type="text/javascript">
+      google.charts.load('current', {'packages':['corechart']});
+      google.charts.setOnLoadCallback(drawChart);
+
+      function drawChart() {
+        var data = google.visualization.arrayToDataTable([
+          ['Categoría', 'Monto'],
+          ${categoriasOrdenadas.map(c => `['${c[0]}', ${c[1]}]`).join(',\n          ')}
+        ]);
+
+        var options = {
+          title: '${obtenerNombreMes(mes)} ${anio} - $${totalMes.toFixed(2)}',
+          pieHole: 0.4,
+          pieSliceTextStyle: {
+            color: 'white',
+          },
+          backgroundColor: 'transparent',
+          chartArea: {
+            width: '90%',
+            height: '90%'
+          },
+          colors: ['#FF6384', '#36A2EB', '#FFCE56', '#4BC0C0', '#9966FF', '#FF9F40', '#C9CBCF', '#7BC225']
+        };
+
+        var chart = new google.visualization.PieChart(document.getElementById('piechart'));
+        chart.draw(data, options);
+      }
+    </script>
+  </head>
+  <body style="margin:0;padding:10px;">
+    <div id="piechart" style="width: 400px; height: 400px;"></div>
+  </body>
+</html>
+  `;
+  
+  // Guardar HTML temporalmente y convertir a imagen
+  const htmlBlob = Utilities.newBlob(html, 'text/html', 'grafico.html');
+  const archivoHtml = DriveApp.createFile(htmlBlob);
+  
+  // Nota: Google Apps Script no puede convertir HTML a imagen directamente
+  // Enviamos un mensaje con los datos del gráfico en formato texto
+  let mensaje = `📊 *Gráfico de ${obtenerNombreMes(mes)} ${anio}*\n\n`;
+  mensaje += `💰 Total: *$${totalMes.toFixed(2)}*\n\n`;
+  
+  const maxMonto = Math.max(...categoriasMontos);
+  
+  categoriasOrdenadas.forEach(([cat, monto]) => {
+    const barra = '█'.repeat(Math.round((monto / maxMonto) * 20));
+    const porcentaje = ((monto / totalMes) * 100).toFixed(1);
+    mensaje += `${barra} ${cat}: $${monto.toFixed(2)} (${porcentaje}%)\n`;
+  });
+  
+  sendMessageMarkdown(chatId, mensaje);
+  
+  // Limpieza: eliminar archivo HTML temporal
+  archivoHtml.setTrashed(true);
+}
+
 // --- OBTENER NOMBRE DEL MES ---
 function obtenerNombreMes(mes) {
   const meses = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 
@@ -498,7 +824,6 @@ function obtenerNombreMes(mes) {
 function enviarTecladoCategorias(chatId, monto, descripcion, fila) {
   const texto = `💸 Gasto de *$${monto}* en "${descripcion}".\n👇 Selecciona la categoría:`;
   
-  // Obtener categorías guardadas o usar default
   const categorias = getCategorias();
   
   const keyboard = [];
@@ -525,7 +850,6 @@ function getCategorias() {
     return JSON.parse(categoriasGuardadas);
   }
   
-  // Categorías por defecto
   return [
     { nombre: 'Comida', emoji: '🍎' },
     { nombre: 'Transporte', emoji: '🚌' },
