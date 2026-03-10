@@ -8,7 +8,8 @@
  */
 
 // --- CONFIGURACIÓN ---
-const ADMIN_IDS = [533617529]; // IDs de Telegram autorizados (agregar más si es necesario)
+const ADMIN_IDS = [123456789]; // IDs de Telegram autorizados (REEMPLAZAR con tu ID real)
+// Para obtener tu Telegram ID: buscá @userinfobot en Telegram y enviá cualquier mensaje
 const TIMEZONE = 'America/Argentina/Buenos_Aires';
 
 // --- SETUP INICIAL (ejecutar una vez desde Apps Script) ---
