@@ -86,8 +86,8 @@ function setup() {
   
   // Inicializar hoja de cálculo con encabezados
   const sheet = SpreadsheetApp.openById(props.getProperty('SHEET_ID')).getActiveSheet();
-  sheet.getRange('A1:E1').setValues([['Fecha', 'Monto', 'Descripción', 'Categoría', 'ID Chat']]);
-  sheet.getRange('A1:E1').setFontWeight('bold');
+  sheet.getRange('A1:F1').setValues([['Fecha', 'Monto', 'Descripción', 'Categoría', 'ID Chat', 'Reintegro']]);
+  sheet.getRange('A1:F1').setFontWeight('bold');
   
   Logger.log('✅ Configuración completada');
 }
@@ -205,30 +205,43 @@ function procesarMensaje(message) {
     return;
   }
   
-  // PROCESAR GASTO (Fix 15: Manejo de errores claros)
+  // COMANDO /reintegros - Ver reintegros del mes
+  if (text === '/reintegros') {
+    mostrarReintegros(chatId);
+    return;
+  }
+  
+  // PROCESAR GASTO (Fix 15: Manejo de errores claros + Reintegros)
   try {
     const date = new Date(message.date * 1000);
-    const partes = text.split(' ');
-    const monto = parseFloat(partes[0].replace(',', '.'));
-    const config = getConfig();
-    const sheet = SpreadsheetApp.openById(config.sheetId).getActiveSheet();
+    
+    // Detectar formato con reintegro: "1000 pizza -r 100" o "1000 pizza -reintegro 100"
+    const match = text.match(/^([\d.,]+)\s+(.+?)(?:\s+-r(?:eintegro)?\s+([\d.,]+))?$/i);
+    
+    if (match) {
+      const monto = parseFloat(match[1].replace(',', '.'));
+      const descripcion = match[2].trim();
+      const reintegro = match[3] ? parseFloat(match[3].replace(',', '.')) : 0;
+      const config = getConfig();
+      const sheet = SpreadsheetApp.openById(config.sheetId).getActiveSheet();
 
-    if (!isNaN(monto) && partes.length > 1) {
-      const descripcion = partes.slice(1).join(' ');
-      
-      // Usar timezone de Argentina
-      const fechaAR = Utilities.formatDate(date, TIMEZONE, 'yyyy-MM-dd HH:mm:ss');
-      
-      sheet.appendRow([fechaAR, monto, descripcion, '⏳ Pendiente', chatId]);
-      const fila = sheet.getLastRow();
-      
-      // Verificar presupuesto después de registrar
-      const mensajeGasto = enviarTecladoCategorias(chatId, monto, descripcion, fila);
-      
-      // Verificar si supera presupuesto
-      verificarPresupuesto(chatId);
+      if (!isNaN(monto) && descripcion.length > 0) {
+        // Usar timezone de Argentina
+        const fechaAR = Utilities.formatDate(date, TIMEZONE, 'yyyy-MM-dd HH:mm:ss');
+        
+        sheet.appendRow([fechaAR, monto, descripcion, '⏳ Pendiente', chatId, reintegro]);
+        const fila = sheet.getLastRow();
+        
+        // Verificar presupuesto después de registrar
+        const mensajeGasto = enviarTecladoCategorias(chatId, monto, descripcion, fila, reintegro);
+        
+        // Verificar si supera presupuesto
+        verificarPresupuesto(chatId);
+      } else {
+        sendMessage(chatId, `⚠️ Formato incorrecto.\n\n👉 Ejemplo: 1500 cafe\n👉 Ejemplo: 2500.50 taxi al centro\n👉 Con reintegro: 1000 pizza -r 100\n\n📊 Para ver tus gastos envía /mes\n📜 Para historial envía /historial\n🏷️ Para categorías envía /categorias\n📥 Para exportar envía /exportar\n💰 Para presupuesto envía /presupuesto\n📊 Para gráfico envía /grafico\n💵 Para reintegros envía /reintegros\n❓ Para ayuda envía /ayuda`);
+      }
     } else {
-      sendMessage(chatId, `⚠️ Formato incorrecto.\n\n👉 Ejemplo: 1500 cafe\n👉 Ejemplo: 2500.50 taxi al centro\n\n📊 Para ver tus gastos envía /mes\n📜 Para historial envía /historial\n🏷️ Para categorías envía /categorias\n📥 Para exportar envía /exportar\n💰 Para presupuesto envía /presupuesto\n📊 Para gráfico envía /grafico\n❓ Para ayuda envía /ayuda`);
+      sendMessage(chatId, `⚠️ Formato incorrecto.\n\n👉 Ejemplo: 1500 cafe\n👉 Ejemplo: 2500.50 taxi al centro\n👉 Con reintegro: 1000 pizza -r 100\n\n📊 Para ver tus gastos envía /mes\n📜 Para historial envía /historial\n🏷️ Para categorías envía /categorias\n📥 Para exportar envía /exportar\n💰 Para presupuesto envía /presupuesto\n📊 Para gráfico envía /grafico\n💵 Para reintegros envía /reintegros\n❓ Para ayuda envía /ayuda`);
     }
   } catch (error) {
     Logger.error('Error en procesarMensaje (procesar gasto): ' + error.toString());
@@ -243,6 +256,9 @@ function enviarBienvenida(chatId) {
     `1️⃣ Envía un gasto: \`1500 cafe\`\n` +
     `2️⃣ Selecciona la categoría con los botones\n` +
     `3️⃣ ¡Listo! Tu gasto queda registrado\n\n` +
+    `💵 *Gastos con reintegro:*\n` +
+    `\`1000 pizza -r 100\` → Neto: $900\n` +
+    `\`500 uber -reintegro 50\` → Neto: $450\n\n` +
     `📊 *Comandos disponibles:*\n\n` +
     `*Reportes:*\n` +
     `/mes - Resumen del mes actual\n` +
@@ -252,7 +268,8 @@ function enviarBienvenida(chatId) {
     `/exportar - Descargar CSV del mes actual\n` +
     `/exportar 03-2026 - CSV de marzo 2026\n` +
     `/grafico - Gráfico de categorías del mes\n` +
-    `/grafico 03-2026 - Gráfico de marzo 2026\n\n` +
+    `/grafico 03-2026 - Gráfico de marzo 2026\n` +
+    `/reintegros - Ver reintegros del mes\n\n` +
     `*Presupuesto:*\n` +
     `/presupuesto - Ver presupuesto y progreso\n` +
     `/presupuesto 50000 - Establecer presupuesto de $50000\n` +
@@ -295,12 +312,60 @@ function mostrarHistorial(chatId, cantidad) {
     const monto = fila[1];
     const descripcion = fila[2];
     const categoria = fila[3];
+    const reintegro = fila[5] || 0;
     
     const catIcon = categoria === '⏳ Pendiente' ? '⏳' : '✅';
     
     mensaje += `${index + 1}. *$${monto}* - ${descripcion}\n`;
-    mensaje += `   ${catIcon} ${categoria}\n\n`;
+    mensaje += `   ${catIcon} ${categoria}\n`;
+    if (reintegro > 0) {
+      const neto = monto - reintegro;
+      mensaje += `   💵 Reintegro: $${reintegro} | Neto: $${neto}\n`;
+    }
+    mensaje += `\n`;
   });
+  
+  sendMessageMarkdown(chatId, mensaje);
+}
+
+// --- MOSTRAR REINTEGROS DEL MES ---
+function mostrarReintegros(chatId, mes = null, anio = null) {
+  if (mes === null || anio === null) {
+    const fechaActual = new Date();
+    const fechaAR = new Date(fechaActual.toLocaleString('en-US', {timeZone: TIMEZONE}));
+    mes = fechaAR.getMonth();
+    anio = fechaAR.getFullYear();
+  }
+  
+  const gastosDelMes = getGastosDelMes(mes, anio);
+  
+  // Filtrar solo gastos con reintegro > 0
+  const reintegros = gastosDelMes.filter(fila => {
+    const reintegro = parseFloat(fila[5] || 0);
+    return reintegro > 0;
+  });
+  
+  if (reintegros.length === 0) {
+    sendMessage(chatId, `💵 No hay reintegros registrados en ${obtenerNombreMes(mes)} ${anio}.`);
+    return;
+  }
+  
+  let totalReintegros = 0;
+  let mensaje = `💵 *Reintegros de ${obtenerNombreMes(mes)} ${anio}*\n\n`;
+  
+  reintegros.forEach((fila, index) => {
+    const monto = parseFloat(fila[1]);
+    const descripcion = fila[2];
+    const reintegro = parseFloat(fila[5] || 0);
+    const neto = monto - reintegro;
+    
+    totalReintegros += reintegro;
+    mensaje += `${index + 1}. *${descripcion}*\n`;
+    mensaje += `   Monto: $${monto} | 💵 Reintegro: *$${reintegro}*\n`;
+    mensaje += `   Neto: $${neto}\n\n`;
+  });
+  
+  mensaje += `💰 *Total reintegrado: $${totalReintegros.toFixed(2)}*`;
   
   sendMessageMarkdown(chatId, mensaje);
 }
@@ -318,7 +383,7 @@ function getGastosDelMes(mes, anio) {
   
   for (let start = 2; start <= lastRow; start += batchSize) {
     const end = Math.min(start + batchSize - 1, lastRow);
-    const batch = sheet.getRange(start, 1, end - start + 1, 5).getValues();
+    const batch = sheet.getRange(start, 1, end - start + 1, 6).getValues();
     
     batch.forEach(fila => {
       const fecha = new Date(fila[0]);
@@ -331,7 +396,7 @@ function getGastosDelMes(mes, anio) {
   return datos;
 }
 
-// --- GENERAR REPORTE MENSUAL (Fix 5: Usa getGastosDelMes) ---
+// --- GENERAR REPORTE MENSUAL (Fix 5: Usa getGastosDelMes + Reintegros) ---
 function generarReporteMensual(chatId, mes = null, anio = null) {
   if (mes === null || anio === null) {
     const fechaActual = new Date();
@@ -348,20 +413,27 @@ function generarReporteMensual(chatId, mes = null, anio = null) {
   }
   
   let totalMes = 0;
+  let totalReintegros = 0;
   let categorias = {};
 
   gastosDelMes.forEach(fila => {
     const monto = parseFloat(fila[1]);
+    const reintegro = parseFloat(fila[5] || 0);
+    const neto = monto - reintegro;
     const categoria = fila[3] || 'Sin categoría';
     
     if (!isNaN(monto)) {
-      totalMes += monto;
-      categorias[categoria] = (categorias[categoria] || 0) + monto;
+      totalMes += neto;  // Usar monto neto
+      totalReintegros += reintegro;
+      categorias[categoria] = (categorias[categoria] || 0) + neto;
     }
   });
 
   let mensaje = `📊 *Resumen de ${obtenerNombreMes(mes)} ${anio}*\n\n`;
   mensaje += `💰 *Total Gastado: $${totalMes.toFixed(2)}*\n`;
+  if (totalReintegros > 0) {
+    mensaje += `💵 *Reintegros: $${totalReintegros.toFixed(2)}*\n`;
+  }
   mensaje += `📦 Gastos: ${gastosDelMes.length}\n\n`;
   mensaje += `📈 *Por Categoría:*\n`;
   
@@ -433,7 +505,7 @@ function resetearCategorias(chatId) {
   sendMessage(chatId, `🔄 Categorías reseteadas a las originales (${CATEGORIAS_DEFAULT.length} categorías).`);
 }
 
-// --- EXPORTAR CSV (Fix 5: Usa getGastosDelMes) ---
+// --- EXPORTAR CSV (Fix 5: Usa getGastosDelMes + Reintegros) ---
 function exportarCSV(chatId, mes = null, anio = null) {
   const config = getConfig();
   
@@ -451,7 +523,21 @@ function exportarCSV(chatId, mes = null, anio = null) {
     return;
   }
   
-  const gastosFiltrados = [['Fecha', 'Monto', 'Descripción', 'Categoría'], ...gastosDelMes];
+  const gastosFiltrados = [['Fecha', 'Monto', 'Reintegro', 'Neto', 'Descripción', 'Categoría']];
+  
+  gastosDelMes.forEach(fila => {
+    const monto = parseFloat(fila[1]);
+    const reintegro = parseFloat(fila[5] || 0);
+    const neto = monto - reintegro;
+    gastosFiltrados.push([
+      fila[0],  // Fecha
+      fila[1],  // Monto
+      reintegro,  // Reintegro
+      neto.toFixed(2),  // Neto
+      fila[2],  // Descripción
+      fila[3]   // Categoría
+    ]);
+  });
   
   let csv = '';
   gastosFiltrados.forEach(fila => {
@@ -490,7 +576,7 @@ function establecerPresupuesto(chatId, monto) {
   sendMessageMarkdown(chatId, `💰 *Presupuesto establecido: $${monto.toLocaleString('es-AR')}*\n\n📊 Te avisaré cuando:\n• Alcanzes el 80% ($${(monto * 0.8).toLocaleString('es-AR')})\n• Alcanzes el 100% ($${monto.toLocaleString('es-AR')})\n\nUsá /presupuesto para ver tu progreso.`);
 }
 
-// --- VER PRESUPUESTO ---
+// --- VER PRESUPUESTO (con reintegros) ---
 function verPresupuesto(chatId) {
   const props = PropertiesService.getUserProperties();
   const presupuesto = parseFloat(props.getProperty('PRESUPUESTO') || '0');
@@ -508,10 +594,14 @@ function verPresupuesto(chatId) {
   const gastosDelMes = getGastosDelMes(mesActual, anioActual);
   
   let totalMes = 0;
+  let totalReintegros = 0;
   gastosDelMes.forEach(fila => {
     const monto = parseFloat(fila[1]);
+    const reintegro = parseFloat(fila[5] || 0);
+    const neto = monto - reintegro;
     if (!isNaN(monto)) {
-      totalMes += monto;
+      totalMes += neto;  // Usar monto neto
+      totalReintegros += reintegro;
     }
   });
   
@@ -532,6 +622,9 @@ function verPresupuesto(chatId) {
   let mensaje = `💰 *Estado del Presupuesto*\n\n`;
   mensaje += `${estado}\n\n`;
   mensaje += `📊 Gastado: *$${totalMes.toLocaleString('es-AR')}* (${porcentaje}%)\n`;
+  if (totalReintegros > 0) {
+    mensaje += `💵 Reintegros: *$${totalReintegros.toLocaleString('es-AR')}*\n`;
+  }
   mensaje += `💵 Presupuesto: *$${presupuesto.toLocaleString('es-AR')}*\n`;
   mensaje += `📈 Restante: *$${restante.toLocaleString('es-AR')}*\n\n`;
   
@@ -551,7 +644,7 @@ function resetearPresupuesto(chatId) {
   sendMessage(chatId, '🔄 Presupuesto eliminado.\n\nYa no recibirás alertas de presupuesto.');
 }
 
-// --- VERIFICAR PRESUPUESTO (después de cada gasto) (Fix 5: Usa getGastosDelMes) ---
+// --- VERIFICAR PRESUPUESTO (después de cada gasto) (Fix 5: Usa getGastosDelMes + Reintegros) ---
 function verificarPresupuesto(chatId) {
   const props = PropertiesService.getUserProperties();
   const presupuesto = parseFloat(props.getProperty('PRESUPUESTO') || '0');
@@ -584,8 +677,10 @@ function verificarPresupuesto(chatId) {
   let totalMes = 0;
   gastosDelMes.forEach(fila => {
     const monto = parseFloat(fila[1]);
+    const reintegro = parseFloat(fila[5] || 0);
+    const neto = monto - reintegro;
     if (!isNaN(monto)) {
-      totalMes += monto;
+      totalMes += neto;  // Usar monto neto
     }
   });
   
@@ -648,11 +743,13 @@ function enviarGrafico(chatId, mes = null, anio = null) {
 
   gastosDelMes.forEach(fila => {
     const monto = parseFloat(fila[1]);
+    const reintegro = parseFloat(fila[5] || 0);
+    const neto = monto - reintegro;
     const categoria = fila[3] || 'Sin categoría';
     
     if (!isNaN(monto)) {
-      totalMes += monto;
-      categorias[categoria] = (categorias[categoria] || 0) + monto;
+      totalMes += neto;  // Usar monto neto
+      categorias[categoria] = (categorias[categoria] || 0) + neto;
     }
   });
 
@@ -739,9 +836,12 @@ function obtenerNombreMes(mes) {
   return meses[mes];
 }
 
-// --- ENVIAR TECLADO DE CATEGORÍAS ---
-function enviarTecladoCategorias(chatId, monto, descripcion, fila) {
-  const texto = `💸 Gasto de *$${monto}* en "${descripcion}".\n👇 Selecciona la categoría:`;
+// --- ENVIAR TECLADO DE CATEGORÍAS (con reintegros) ---
+function enviarTecladoCategorias(chatId, monto, descripcion, fila, reintegro = 0) {
+  const neto = monto - reintegro;
+  const texto = reintegro > 0 
+    ? `💸 Gasto de *$${monto}* en "${descripcion}".\n💵 Reintegro: *$${reintegro}*\n💰 Neto: *$${neto}*\n👇 Selecciona la categoría:`
+    : `💸 Gasto de *$${monto}* en "${descripcion}".\n👇 Selecciona la categoría:`;
   
   const categorias = getCategorias();
   

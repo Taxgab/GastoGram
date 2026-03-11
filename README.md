@@ -1,6 +1,6 @@
 # 💸 Gastogram - Bot de Gastos Personales
 
-**Versión:** 4.0 - Fase 3: Reportes Avanzados
+**Versión:** 4.1 - Sistema de Reintegros
 
 Un bot de Telegram serverless para registrar gastos diarios y "gastos hormiga" sin fricción, conectado directamente a Google Sheets.
 
@@ -29,6 +29,7 @@ Las aplicaciones de finanzas personales suelen ser complejas de usar en el momen
 * **🔔 Alertas automáticas:** Te avisamos cuando te acercás al límite
 * **🇦🇷 Timezone Argentina:** Todas las fechas en hora local (ART)
 * **💾 Credenciales seguras:** Usando PropertiesService de Google Apps Script
+* **💵 Reintegros:** Registrá gastos con reintegro usando `-r` o `-reintegro`
 * **100% Serverless y Gratuito:** Utiliza Google Apps Script como puente, alojando la base de datos en Google Sheets
 
 ---
@@ -130,6 +131,7 @@ function setup() {
 | `/exportar 03-2026` | Descargar CSV de marzo 2026 |
 | `/grafico` | Ver gráfico de categorías del mes actual |
 | `/grafico 03-2026` | Gráfico de categorías de marzo 2026 |
+| `/reintegros` | Ver reintegros del mes actual |
 
 #### 🏷️ Categorías
 
@@ -165,6 +167,22 @@ function setup() {
    - Descripción
    - Categoría
    - ID de chat (para auditoría)
+
+### Registrar Gasto con Reintegro
+
+Si recibiste un reintegro (ej: comida compartida, reembolso), podés registrarlo directamente:
+
+```
+1000 pizza -r 100
+500 uber -reintegro 50
+```
+
+El bot calculará automáticamente:
+- **Monto:** $1000
+- **Reintegro:** $100
+- **Neto:** $900
+
+Los reintegros se descuentan del total del mes y aparecen en reportes. Usá `/reintegros` para ver todos los reintegros del mes.
 
 ### Ver reportes
 
@@ -254,6 +272,17 @@ Para obtener tu Telegram ID, podés usar el bot [@userinfobot](https://t.me/user
 ---
 
 ## 📝 Changelog
+
+### v4.1 (2026-03-11) - Sistema de Reintegros
+- ✅ Registrar gastos con reintegro: `1000 pizza -r 100`
+- ✅ Columna "Reintegro" en Google Sheets (compatible con hojas existentes)
+- ✅ Cálculo automático de monto neto (monto - reintegro)
+- ✅ Reportes mensuales usan monto neto
+- ✅ Historial muestra reintegro si existe
+- ✅ Exportar CSV incluye columnas Reintegro y Neto
+- ✅ Comando `/reintegros` para ver reintegros del mes
+- ✅ Presupuesto usa monto neto para cálculos
+- ✅ Gráficos usan monto neto
 
 ### v4.0 (2026-03-10) - Fase 3: Reportes Avanzados
 - ✅ `/grafico` - Gráfico de categorías del mes actual
